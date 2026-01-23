@@ -1,0 +1,28 @@
+{
+  "name": "voiceclient",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ricky0123/vad-web": "^0.0.30",
+    "@tensorflow/tfjs": "^4.22.0",
+    "crypto-js": "^4.2.0",
+    "d3-scale-chromatic": "^3.1.0",
+    "dayjs": "^1.11.19",
+    "element-plus": "^2.13.0",
+    "js-base64": "^3.7.8",
+    "openai": "^6.15.0",
+    "uuid": "^13.0.0",
+    "vue": "^3.5.24",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.2.4"
+  }
+}
