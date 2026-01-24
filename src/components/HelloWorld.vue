@@ -62,11 +62,14 @@
         <div class="divtitle">是否深度思考</div>
         <!-- <div class="divtitle">思维链Token</div> -->
       </div>
+      <div style="float:right;width:100%;text-align:center;margin-top:20px;">
+        <button @click="toggleVAD" :disabled="loading" 
+            :style="{'background':listening?'#ff4949':'#42b983'}">
+          {{ listening ? '停止检测' : '开始检测' }}
+        </button>
+      </div>
     </div>
     <div class="vad-right-view">
-      <button @click="toggleVAD" :disabled="loading" :style="{'background':listening?'#ff4949':'#42b983'}">
-        {{ listening ? '停止检测' : '开始检测' }}
-      </button>
       <div v-if="loading">加载中...</div>
       <div class="visualizer" :style="{ backgroundColor: indicatorColor }">
         语音检测状态: {{ statusText }}
@@ -83,8 +86,8 @@
           </div>
         </div>
         <div class="chat-input">
-          <el-input v-model="userInput" type="textarea" @enter="handleEnterKey" 
-            clearable resize="none" :rows="3" />
+          <el-input v-model="userInput" type="textarea" @keydown="handleKeyDown" :disabled="!listening"
+            clearable resize="none" :rows="3" placeholder="Command/Ctrl+Enter To Send" />
         </div>
       </div>
     </div>
@@ -93,9 +96,11 @@
 
 <script setup lang="ts">
 import { getCurrentInstance, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+/// VAD和ONNX运行时
 import { MicVAD } from '@ricky0123/vad-web'
 import * as ort from 'onnxruntime-web'
 
+/// 实体类和服务类
 import VoiceText from '../utils/Entitys/VoiceText.js'
 import IatResult from '../utils/Entitys/IatResult.js'
 import AudioSound from '../utils/Entitys/AudioSound.js'
@@ -103,10 +108,12 @@ import VoiceService from '../utils/Services/VoiceService.js'
 import AiAgentService from '../utils/Services/AiAgentService.js'
 import AudioService from '../utils/Services/AudioService.js'
 
+/// 时间处理库
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
+/// 滚动容器引用
 const scrollContainer = ref(null);
 
 // 状态管理
@@ -118,7 +125,10 @@ const breakSoundUUIDList = ref<string[]>([]);
 const listening = ref(false)
 const loading = ref(false)
 const statusText = ref('未开始')
+
+/// 对话数据存储变量
 const voiceTexts = ref<VoiceText[]>([])
+const iatResults = ref<IatResult[]>([])
 const indicatorColor = ref('#cccccc')
 
 ///页面控制控件
@@ -132,17 +142,20 @@ const linkWeb = ref(true);
 const temperature = ref(0);
 const thinking = ref(false)
 const thinkingToken = ref(1)
-
+const userInput = ref('');
 const selectedValue = ref('英语:')
 
+/// 服务实例
 const voiceService = ref<any>(null)
 const audioService = ref<any>(null)
 const aiAgents = ref<AiAgentService[]>([]);
 
+/// 获取当前实例以访问全局属性
 const instance = getCurrentInstance();
 
-const iatResults = ref<IatResult[]>([])
-
+/**
+ * 音频播放相关变量
+ */
 const soundEncode = ref('');
 const audioSounds = ref<AudioSound[]>([]);
 const audioContext = ref<any>(null);
@@ -157,41 +170,9 @@ const playPause = ref(0);
 const playPauseSound = ref<any>(null);
 const isContinue = ref(false);
 
-const startTime = ref<number>(0);
-
-// 切换检测状态
-const toggleVAD = async () => {
-  ///
-  if(!audioContext.value)
-    audioContext.value = new (window.AudioContext || (window as any).webkitAudioContext)();
-
-  if (listening.value) {
-    await vad.value.pause()
-    closeVoicePlayThread();
-    listening.value = false
-    statusText.value = '已停止'
-    indicatorColor.value = '#cccccc'
-  } else {
-    await vad.value.start();
-    VoicePlayThread();
-    listening.value = true;
-    voiceService.value.resetDecibel();
-    statusText.value = '正在检测...';
-    
-    ///开场白展示及播报
-    if (isOpeningRemarks.value) {
-      const voiceText = new VoiceText(
-          dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
-          '', '', 0);
-      voiceText.addVoiceAnswer(instance.appContext.config.globalProperties.$openingRemarks,false);
-      audioService.value.AddSendContentToAudio(instance.appContext.config.globalProperties.$uuid(), 
-        voiceText.answerText, false);
-      voiceTexts.value.push(voiceText);
-    }
-  }
-}
-
-// 初始化VAD
+/**
+ *  页面初始化VAD+基础元素
+ */
 const initVAD = async () => {
   try {
     loading.value = true;
@@ -237,6 +218,72 @@ const initVAD = async () => {
   }
 }
 
+// 切换检测状态
+const toggleVAD = async () => {
+  ///
+  if(!audioContext.value)
+    audioContext.value = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+  if (listening.value) {
+    await vad.value.pause()
+    closeVoicePlayThread();
+    listening.value = false
+    statusText.value = '已停止'
+    indicatorColor.value = '#cccccc'
+  } else {
+    await vad.value.start();
+    VoicePlayThread();
+    listening.value = true;
+    voiceService.value.resetDecibel();
+    statusText.value = '正在检测...';
+    
+    ///开场白展示及播报
+    if (isOpeningRemarks.value) {
+      const voiceText = new VoiceText(
+          dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+          instance.appContext.config.globalProperties.$uuid(), '', 0);
+      voiceText.addVoiceAnswer(instance.appContext.config.globalProperties.$openingRemarks,false);
+      /// 获取语音数据
+      if(switchValue.value) {
+        audioService.value.AddSendContentToAudio(instance.appContext.config.globalProperties.$uuid(), 
+          voiceText.answerText, false);
+      }
+      voiceTexts.value.push(voiceText);
+    }
+  }
+}
+
+/**
+ * 输入数据直接进行打断处理
+ */
+const handleKeyDown = (e) => {
+  // 处理回车键逻辑 判断：Mac(metaKey=Command) 或 Windows(ctrlKey=Ctrl) + Enter(keyCode=13)
+  if ((e.metaKey || e.ctrlKey) && e.keyCode === 13) {
+    e.preventDefault();
+
+    if(userInput.value && userInput.value.trim() !== '') {
+      let uuid = instance.appContext.config.globalProperties.$uuid();
+
+      if(playSoundStatus.value) {
+        breakUUID.value = uuid;
+        breakFlag.value = true;
+      }
+
+      const voiceText = new VoiceText(
+        dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+        uuid, userInput.value.trim(), 0);
+      voiceTexts.value.push(voiceText);
+      if(switchValue.value) {
+        translateToOtherLanguage(uuid);
+      }
+      userInput.value = '';
+
+      breakSuccess(uuid).then(() => {
+          breakUUID.value = '';});
+    }
+  }
+}
+
 /**
  * 展示翻译内容
  */
@@ -269,6 +316,7 @@ const showVociceText = async (uuid:string,data:string) => {
     indexIatResult = iatResults.value.length -1;
   }
 
+  /// 数据临时存储
   iatResults.value[indexIatResult].iatResult[res.data.result.sn] = res.data.result
   if (res.data.result.pgs == 'rpl') {
     res.data.result.rg.forEach(i => {
@@ -338,6 +386,7 @@ const translateToOtherLanguage = async (uuid) => {
 
   const index = voiceTexts.value.findIndex(voiceText => voiceText.isMine(uuid));
   if (index > -1) {
+    /// 关联上下文
     const beContext = [];
     if (numContent.value > 1 && index > 1) {
       let iNum=index-numContent.value+1>-1?index-numContent.value+1:0;
@@ -347,6 +396,7 @@ const translateToOtherLanguage = async (uuid) => {
       }
     }
     
+    /// 调用大模型服务
     aiAgent.sendQuestion(uuid, modelSelected.value, promptWord.value, 
       voiceTexts.value[index].voiceText, 
       voiceTexts.value[index].targetLang,translateCallBack,
@@ -365,6 +415,7 @@ const translateToOtherLanguage = async (uuid) => {
  * 文本翻译回调函数
  */
 const translateCallBack = async (uuid, content, isAnswer) => {
+  /// 处理打断逻辑
   let indexBreak = breakModelUUIDList.value.findIndex(item => item == uuid);
   if(indexBreak > -1) {
     if(!isAnswer) {
@@ -377,12 +428,13 @@ const translateCallBack = async (uuid, content, isAnswer) => {
     isAnswer = false;
   }
 
+  /// 展示大模型输出结果
   const index = voiceTexts.value.findIndex(voiceText => voiceText.isMine(uuid));
   if (index > -1) {
     audioService.value.AddSendContentToAudio(uuid, content, isAnswer);
     voiceTexts.value[index].addVoiceAnswer(content, isAnswer);
   } else {
-    console.error("-".repeat(10) + "语音翻译查找待识别文本时失败！" + "-".repeat(10));
+    console.error("-".repeat(10) + "语音信息处理数据失败！" + "-".repeat(10));
   }
 }
 
@@ -397,6 +449,7 @@ const textToTTSCallBack = async (uuid, data) => {
     return;
   }
 
+  /// 处理打断逻辑
   let uuidOrg = uuid.substring(0,36);
   let indexBreak = breakSoundUUIDList.value.findIndex(item => item == uuidOrg);
   if(indexBreak > -1) {
@@ -416,6 +469,7 @@ const textToTTSCallBack = async (uuid, data) => {
     closeWebSocket(audioService.value,uuid);
   }
   
+  /// 添加待播放的声音数据
   const index = audioSounds.value.findIndex(audioSound => audioSound.isMine(uuid));
   if(index > -1) {
     audioSounds.value[index].addAudioSound(res.data.audio,res.data.status);
@@ -432,7 +486,7 @@ const textToTTSCallBack = async (uuid, data) => {
 }
 
 /**
- * 声音播放方法
+ * 声音播放方法，定时任务每10秒检查一次
  */
 const VoicePlayThread = () => {
   playClock.value = setInterval(() => {
@@ -458,11 +512,7 @@ const pcmPlayer = () => {
     if (!playPauseSound.value) {
       return;
     }
-    // if (audioSounds.value.length > 0 && audioSounds.value[0].SoundAll) {
-    //   playPauseSound.value = audioSounds.value.shift();
-    // } else {
-    //   return;
-    // }
+    /// 当前播放音频段落信息
     play_Num.value = playPauseSound.value.uuidNum;
     play_UUID.value = playPauseSound.value.uuidOrg;
 
@@ -471,6 +521,7 @@ const pcmPlayer = () => {
       play_UUID.value = '';
     }
 
+    /// 播放音频数据
     audioBufferSource.value = audioContext.value.createBufferSource();
     audioBufferSource.value.buffer = playPauseSound.value.SoundAll;
     audioBufferSource.value.connect(audioContext.value.destination);
@@ -489,6 +540,7 @@ const pcmPlayer = () => {
       playSoundStatus.value = false;
     };
   } catch (err) {
+    /// 播放失败处理
     if(audioBufferSource.value)
       audioBufferSource.value.disconnect();
     audioBufferSource.value = null;
@@ -504,6 +556,7 @@ const pcmPlayer = () => {
  */
 const mp3Player = () => {
   try {
+    /// 续播及新播逻辑，未查到数据直接返回
     if(!isContinue.value) {
       playPauseSound.value = GetVoicePlay();
       if(playPauseSound.value) {
@@ -512,13 +565,6 @@ const mp3Player = () => {
       } else {
         return;
       }
-      // if (audioSounds.value.length > 0 && audioSounds.value[0].SoundAll) {
-      //   playPauseSound.value = audioSounds.value.shift();
-      //   audioUrl.value = URL.createObjectURL(playPauseSound.value.SoundAll)
-      //   audioObj.value = new Audio(audioUrl.value);
-      // } else {
-      //   return;
-      // }
     } else {
       isContinue.value = false;
       if (!audioObj.value) {
@@ -527,22 +573,26 @@ const mp3Player = () => {
       }
     }
 
+    /// 播放音频数据
     audioObj.value.play().catch(err => {
         console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
       });
     playSoundStatus.value = true;
 
+    /// 当前播放音频段落信息
     play_Num.value = playPauseSound.value.uuidNum;
     play_UUID.value = playPauseSound.value.uuidOrg;
 
     breakUUID.value = '';
     breakFlag.value = false;
 
+    /// 播放结束后启动下一节播放
     if(playPauseSound.value.uuidFlag === 'true') {
       play_Num.value = 0;
       play_UUID.value = '';
     }
 
+    /// 播放结束后释放临时 URL（优化性能）
     audioObj.value.onended = () => {
       audioObj.value = null;
       URL.revokeObjectURL(audioUrl.value);
@@ -550,6 +600,7 @@ const mp3Player = () => {
       playSoundStatus.value = false;
     };
   } catch(err) {
+    /// 播放失败处理
     audioObj.value = null;
     URL.revokeObjectURL(audioUrl.value);
     audioUrl.value = null;
@@ -622,6 +673,7 @@ const breakAnswer = async (uuid) => {
   if (playSoundStatus.value) {
     isContinue.value = true;
   }
+  /// MP3停止播放、PCM播放器在下一个周期停止
   if (soundEncode.value == 'MP3') {
     if(audioObj.value) {
       audioObj.value.pause();
@@ -634,6 +686,7 @@ const breakAnswer = async (uuid) => {
  * 成功打断
  */
 const breakSuccess = async (uuid) => {
+  /// PCM播放器在下一个周期停止、MP3立即停止停止播放
   if (soundEncode.value == 'MP3') {
     if(audioObj.value) {
       audioObj.value.currentTime = 0;
@@ -647,11 +700,11 @@ const breakSuccess = async (uuid) => {
     playSoundStatus.value = false;
     isContinue.value = false;
   }
-  //console.log('-'.repeat(10) + 'breakSuccess被调用' + '-'.repeat(10))
 
   play_Num.value = 0;
   play_UUID.value = '';
   
+  /// 清理未播放的声音数据
   if(audioSounds.value.length > 0) {
     for(let i=audioSounds.value.length-1; i>-1; i--) {
       if (audioSounds.value[i].uuid.substring(0,36) != uuid) {
@@ -659,6 +712,7 @@ const breakSuccess = async (uuid) => {
       }
     }
   }
+  /// 清理未完成的大模型输出数据
   if(aiAgents.value.length > 0) {
     for (let i=aiAgents.value.length-1; i>-1; i--) {
       if(!aiAgents.value[i].isMine(uuid)) {
@@ -715,15 +769,18 @@ watch(
 
 // 组件卸载时清理
 onUnmounted(async () => {
+  /// 停止VAD
   if (vad.value) {
     await vad.value.destroy()
   }
+  /// 停止音频播放
   if (audioContext.value) {
     audioContext.value = null;
     if(audioBufferSource.value) {
       audioBufferSource.value.stop();
     }
   }
+  /// 停止MP3播放
   if(audioObj.value) {
     audioObj.value.stop();
   }
