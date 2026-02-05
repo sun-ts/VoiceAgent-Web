@@ -1,7 +1,6 @@
 import WebSocketSendEntity from '../Entitys/WebSocketSendEntity.js'
 import WebSocketSendTool from '../WebSocket/WebSocketSendTool.js'
 import XfWebSocketTool from '../WebSocket/XfWebSocketTool.js';
-import CryptoJS from 'crypto-js';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -17,15 +16,15 @@ class VoiceService {
      */
     constructor(positiveSpeechThreshold,negativeSpeechThreshold,
         preSpeechPadFrame,redemptionFrame,cacheSpeechMs,instance,callBack,breakFunction,inputVolume) {
-        /// 人声检测阀值
+        /// 人声检测阀值 0.5
         this.positiveSpeechThreshold = positiveSpeechThreshold;
-        /// 静音检测阀值
+        /// 静音检测阀值 0.3
         this.negativeSpeechThreshold = negativeSpeechThreshold;
-        /// 多少毫秒的人声才开始识别
+        /// 多少毫秒的人声才开始识别 3
         this.preSpeechPadFrame = preSpeechPadFrame
-        /// 多少毫秒未识别到人声才标识结束
+        /// 多少毫秒未识别到人声才标识结束 37
         this.redemptionFrame = redemptionFrame;
-        /// 缓存多少毫秒的音频数据
+        /// 缓存多少毫秒的音频数据 250
         this.cacheSpeechMs = cacheSpeechMs;
         /// 公共属性及参数
         this.instance = instance;
@@ -59,6 +58,23 @@ class VoiceService {
         // 扩展 dayjs 支持时区和UTC
         dayjs.extend(utc);
         dayjs.extend(timezone);
+    }
+
+    /**
+     * 设置Vad参数
+     * @param {*} positiveSpeechThreshold 
+     * @param {*} negativeSpeechThreshold 
+     * @param {*} preSpeechPadFrame 
+     * @param {*} redemptionFrame 
+     * @param {*} cacheSpeechMs 
+     */
+    setVadParam(positiveSpeechThreshold,negativeSpeechThreshold,
+        preSpeechPadFrame,redemptionFrame,cacheSpeechMs) {
+        this.positiveSpeechThreshold = positiveSpeechThreshold;
+        this.negativeSpeechThreshold = negativeSpeechThreshold;
+        this.preSpeechPadFrame = preSpeechPadFrame;
+        this.redemptionFrame = redemptionFrame;
+        this.cacheSpeechMs = cacheSpeechMs;
     }
 
     /**
@@ -96,14 +112,17 @@ class VoiceService {
             const probability = probs.isSpeech
             const byteArray = this.floatTo16BitByteArray(frame);
             /// 实时展示声音大小
-            if (probability >= this.positiveSpeechThreshold) {
-                this.inputVolume && this.inputVolume(`rgba(0, 255, 0, ${Math.min(probability, 1)})`);
-            } else {
-                this.inputVolume && this.inputVolume('#cccccc');
-            }
+            this.inputVolume && this.inputVolume(`rgba(0, 255, 0, ${Math.min(probability, 1)})`);
+            // if (probability >= this.positiveSpeechThreshold) {
+            //     this.inputVolume && this.inputVolume(`rgba(0, 255, 0, ${Math.min(probability, 1)})`);
+            // } else {
+            //     this.inputVolume && this.inputVolume('#cccccc');
+            // }
 
+            /// 缓存数据声音数据
             this.linkedList.push(byteArray);
 
+            /// 未检测到人声，开始检测
             if (probability >= this.positiveSpeechThreshold && !this.isTrigger) {
                 let newDecibel = this.calculateDecibel(byteArray)
                 //console.log('声音分贝情况currentDecibel：' + this.currentDecibel + ',新声音分贝情况：' + newDecibel)
@@ -128,14 +147,15 @@ class VoiceService {
                 }
             }
 
+            /// 已经检测到人声开始
             if(this.isTrigger) {
-                if (probability >= this.positiveSpeechThreshold) {
+                if (probability >= this.positiveSpeechThreshold) { //开始判定
                     this.iStartTime++;
                     this.iEndTime = 0;
-                } else if (probability >= this.negativeSpeechThreshold) {
+                } else if (probability >= this.negativeSpeechThreshold) { //过渡判定
                     if (this.iStartTime > 0)
                         this.iStartTime++;
-                    if (this.iEndTime > 0)
+                    if (this.iEndTime > 1)
                         this.iEndTime++;
                 } else { //终止判定
                     /// 解决Vad跳针问题
@@ -187,6 +207,7 @@ class VoiceService {
                     }
                 }
             }
+            /// 重置未发送状态
             if (!this.isSend && !this.isTrigger) {
                 this.iSendCount = 0;
                 this.iStartTime = 0;
@@ -285,7 +306,7 @@ class VoiceService {
     };
 
     /**
-     * 发送数据到
+     * 发送数据到ASR服务
      * @param {string} uuid 
      * @param {Uint8Array} audioByte 
      * @param {number} status 

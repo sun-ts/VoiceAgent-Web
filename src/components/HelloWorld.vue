@@ -2,6 +2,57 @@
   <div class="vad-detector">
     <h4>实时语音检测并用模型联网搜索回答</h4>
     <div class="vad-left-set">
+      <div>
+        <div style="float:left;width:20%">
+          人声阀值
+        </div>
+        <div style="float:left;width:20%">
+          静音阀值
+        </div>
+        <div style="float:left;width:20%">
+          连续声音
+        </div>
+        <div style="float:left;width:20%">
+          声音缓存
+        </div>
+        <div style="float:left;width:20%">
+          静音时长
+        </div>
+      </div>
+      <div>
+        <div style="float:left;width:20%;">
+          <el-input-number v-model="pThreshold" :min="nThreshold" :max="0.9" :step="0.05" 
+            :disabled="listening" size="small" />
+        </div>
+        <div style="float:left;width:20%">
+          <el-input-number v-model="nThreshold" :min="0.1" :max="pThreshold" :step="0.05" 
+            :disabled="listening" size="small" />
+        </div>
+        <div style="float:left;width:20%">
+          <el-input-number v-model="preFrame" :min="0" :max="1000" :step="10" 
+            :disabled="listening" size="small">
+            <template #suffix>
+              <span>ms</span>
+            </template>
+          </el-input-number>
+        </div>
+        <div style="float:left;width:20%">
+          <el-input-number v-model="cacheFrame" :min="0" :max="500" :step="10" 
+            :disabled="listening" size="small">
+            <template #suffix>
+              <span>ms</span>
+            </template>
+          </el-input-number>
+        </div>
+        <div style="float:left;width:20%">
+          <el-input-number v-model="silenceFrame" :min="500" :max="2000" :step="10" 
+            :disabled="listening" size="small">
+            <template #suffix>
+              <span>ms</span>
+            </template>
+          </el-input-number>
+        </div>
+      </div>
       <div class="right-option">
         <div class="divtitle" style="color:#999999;font-size:9px;line-height:20px">
           系统采用实时语音交互，操作人可直接与机器人对话并切换回答模型，对话过程可随时打断语音机器人回复，打断规则：新录入的语音字数大于5，如果小于5个字机器人会继续回复你的上一个问题。
@@ -62,7 +113,7 @@
         <div class="divtitle">是否深度思考</div>
         <!-- <div class="divtitle">思维链Token</div> -->
       </div>
-      <div style="float:right;width:100%;text-align:center;margin-top:20px;">
+      <div style="float:right;width:100%;text-align:center;margin-top:5px;">
         <button @click="toggleVAD" :disabled="loading" 
             :style="{'background':listening?'#ff4949':'#42b983'}">
           {{ listening ? '停止检测' : '开始检测' }}
@@ -87,7 +138,11 @@
         </div>
         <div class="chat-input">
           <el-input v-model="userInput" type="textarea" @keydown="handleKeyDown" :disabled="!listening"
-            clearable resize="none" :rows="3" placeholder="Command/Ctrl+Enter To Send" />
+            clearable resize="none" :rows="3" placeholder="Command/Ctrl+Enter To Send">
+            <!-- <template #suffix>
+              <el-icon class="el-input__icon"><calendar /></el-icon>
+            </template> -->
+          </el-input>
         </div>
       </div>
     </div>
@@ -145,6 +200,13 @@ const thinkingToken = ref(1)
 const userInput = ref('');
 const selectedValue = ref('英语:')
 
+/// VAD参数
+const pThreshold = ref(0.6);
+const nThreshold = ref(0.35);
+const preFrame = ref(200);
+const silenceFrame = ref(1200);
+const cacheFrame = ref(250);
+
 /// 服务实例
 const voiceService = ref<any>(null)
 const audioService = ref<any>(null)
@@ -186,7 +248,8 @@ const initVAD = async () => {
     isOpeningRemarks.value = instance.appContext.config.globalProperties.$isOpeningRemarks == 'true';
     soundEncode.value = instance.appContext.config.globalProperties.$audioEncode;
 
-    voiceService.value = new VoiceService(0.5, 0.5, 3, 37, 250,
+    /// 初始化声音检测类
+    voiceService.value = new VoiceService(0.5, 0.3, 3, 37, 250,
       instance, showVociceText, breakAnswer, inputVolume);
     audioService.value = new AudioService(textToTTSCallBack);
     
@@ -236,6 +299,15 @@ const toggleVAD = async () => {
     listening.value = true;
     voiceService.value.resetDecibel();
     statusText.value = '正在检测...';
+
+    /// 设置VAD参数
+    voiceService.value.setVadParam(
+      pThreshold.value,
+      nThreshold.value,
+      Math.ceil(preFrame.value / 32),
+      Math.ceil(silenceFrame.value / 32),
+      cacheFrame.value
+    );
     
     ///开场白展示及播报
     if (isOpeningRemarks.value) {
@@ -554,7 +626,7 @@ const pcmPlayer = () => {
 /**
  * MP3播放器
  */
-const mp3Player = () => {
+const mp3Player = async () => {
   try {
     /// 续播及新播逻辑，未查到数据直接返回
     if(!isContinue.value) {
@@ -562,6 +634,7 @@ const mp3Player = () => {
       if(playPauseSound.value) {
         audioUrl.value = URL.createObjectURL(playPauseSound.value.SoundAll)
         audioObj.value = new Audio(audioUrl.value);
+        await audioObj.value.load();
       } else {
         return;
       }
@@ -675,7 +748,7 @@ const breakAnswer = async (uuid) => {
   }
   /// MP3停止播放、PCM播放器在下一个周期停止
   if (soundEncode.value == 'MP3') {
-    if(audioObj.value) {
+    if(audioObj.value && playSoundStatus.value) {
       audioObj.value.pause();
     }
     playSoundStatus.value = false;

@@ -3,7 +3,9 @@ import { ref, onMounted } from 'vue';
 import HelloWorld from './components/HelloWorld.vue'
 import HelloWorld_Mobile from './components/HelloWorld_Mobile.vue'
 
-const is_Mobile = ref(false);
+const is_Mobile = ref(null);
+
+const is_wx = ref(null);
 
 // 判断是否为手机端
 const isMobile = () => {
@@ -11,8 +13,10 @@ const isMobile = () => {
   const mobileKeywords = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|mobile|Android/i;
   // 匹配桌面端关键字
   const desktopKeywords = /Windows|Macintosh|Linux|Chrome|Firefox|Safari/i;
-  
+
   const userAgent = navigator.userAgent || window.opera || navigator.vendor;
+
+  is_wx.value = /MicroMessenger/i.test(navigator.userAgent);
   
   // 优先判断是否为手机端，避免桌面端浏览器模拟手机端的误判
   if (mobileKeywords.test(userAgent)) {
@@ -30,8 +34,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <HelloWorld v-if="!is_Mobile" msg="Vite + Vue" />
-  <HelloWorld_Mobile v-if="is_Mobile" msg="Vite + Vue" />
+  <HelloWorld v-if="is_Mobile===false" msg="Vite + Vue" />
+  <HelloWorld_Mobile v-if="is_Mobile===true" :is_wx="is_wx" msg="Vite + Vue" />
 </template>
 
 <style scoped>

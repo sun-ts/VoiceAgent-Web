@@ -14,7 +14,7 @@
         <el-switch v-model="switchValue" inline-prompt
           active-text="开启" inactive-text="关闭" />
       </div>
-      <div ref="scrollContainer" class="chat-container">
+      <div ref="scrollContainer" class="chat-container" :style="{height:viewportHeight-195+'px'}">
         <div class="chat-loop" v-for="(item, index) in voiceTexts" :key="index">
           <div class="chat-bubble chat-bubble-send" v-if="item.voiceText && item.voiceText.trim()!==''">
             {{ item.voiceText }}
@@ -87,6 +87,9 @@ const isContinue = ref(false);
 
 const startTime = ref<number>(0);
 
+// 获取浏览器可见区域高度
+const viewportHeight = window.innerHeight;
+
 // 切换检测状态
 const toggleVAD = async () => {
   ///
@@ -128,10 +131,10 @@ const initVAD = async () => {
     // ort.env.wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/' //测试环境
     ort.env.wasm.wasmPaths = '/onnxruntime/'  //正式环境
     ort.env.logLevel = 'error';
-
+  
     soundEncode.value = instance.appContext.config.globalProperties.$audioEncode;
 
-    voiceService.value = new VoiceService(0.5, 0.5, 5, 32, 250,
+    voiceService.value = new VoiceService(0.7, 0.45, 5, 32, 250,
       instance, showVociceText, breakAnswer, inputVolume);
     audioService.value = new AudioService(textToTTSCallBack);
     
@@ -373,7 +376,7 @@ const VoicePlayThread = () => {
     } else if (soundEncode.value == 'MP3') {
       mp3Player();
     }
-  },10);
+  },100);
 }
 
 /**
@@ -386,11 +389,6 @@ const pcmPlayer = () => {
     if (!playPauseSound.value) {
       return;
     }
-    // if (audioSounds.value.length > 0 && audioSounds.value[0].SoundAll) {
-    //   playPauseSound.value = audioSounds.value.shift();
-    // } else {
-    //   return;
-    // }
     play_Num.value = playPauseSound.value.uuidNum;
     play_UUID.value = playPauseSound.value.uuidOrg;
 
@@ -435,18 +433,16 @@ const mp3Player = () => {
     if(!isContinue.value) {
       playPauseSound.value = GetVoicePlay();
       if(playPauseSound.value) {
-        audioUrl.value = URL.createObjectURL(playPauseSound.value.SoundAll)
-        audioObj.value = new Audio(audioUrl.value);
+        if(playPauseSound.value.SoundAll instanceof Blob) {
+          audioUrl.value = (webkitURL||window.URL).createObjectURL(playPauseSound.value.SoundAll)
+          audioObj.value = new Audio(audioUrl.value);
+          audioObj.value.load();
+        } else {
+          console.log('-'.repeat(10) + '音频数据格式错误，非Blob格式!' + '-'.repeat(10));
+        }
       } else {
         return;
       }
-      // if (audioSounds.value.length > 0 && audioSounds.value[0].SoundAll) {
-      //   playPauseSound.value = audioSounds.value.shift();
-      //   audioUrl.value = URL.createObjectURL(playPauseSound.value.SoundAll)
-      //   audioObj.value = new Audio(audioUrl.value);
-      // } else {
-      //   return;
-      // }
     } else {
       isContinue.value = false;
       if (!audioObj.value) {
@@ -455,11 +451,18 @@ const mp3Player = () => {
       }
     }
 
-    audioObj.value.play().catch(err => {
-        console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
-      });
-    playSoundStatus.value = true;
+    audioObj.value.onended = () => {
+      audioObj.value = null;
+      (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
+      audioUrl.value = null;
+      playSoundStatus.value = false;
+    };
+    audioObj.value.play().catch((error) => {
+      console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), error);
+    });
 
+    playSoundStatus.value = true;
+    
     play_Num.value = playPauseSound.value.uuidNum;
     play_UUID.value = playPauseSound.value.uuidOrg;
 
@@ -470,16 +473,10 @@ const mp3Player = () => {
       play_Num.value = 0;
       play_UUID.value = '';
     }
-
-    audioObj.value.onended = () => {
-      audioObj.value = null;
-      URL.revokeObjectURL(audioUrl.value);
-      audioUrl.value = null;
-      playSoundStatus.value = false;
-    };
   } catch(err) {
+    console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
     audioObj.value = null;
-    URL.revokeObjectURL(audioUrl.value);
+    (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
     audioUrl.value = null;
     playSoundStatus.value = false;
     if (!play_UUID.value) {
@@ -691,7 +688,6 @@ button:disabled {
 
 /* 聊天容器：优化背景和内边距 */
 .chat-container {
-  height: 480px;
   margin: 0px auto;
   padding: 15px;
   background-color: #f8f9fa;
