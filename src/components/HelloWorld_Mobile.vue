@@ -1,26 +1,96 @@
 <template>
-  <div class="vad-detector">
-    <h4>实时语音检测并用模型(DP V3.2)联网搜索回答</h4>
-    <button @click="toggleVAD" :disabled="loading">
-      {{ listening ? '停止检测' : '开始检测' }}
-    </button>
-    <div v-if="loading">加载中...</div>
-    <div class="visualizer" :style="{ backgroundColor: indicatorColor }">
-      检测状态: {{ statusText }}
-    </div>
-    <div>
-      <div style="margin:0px auto;">
-        是否启动大模型问答及语音播报：：
-        <el-switch v-model="switchValue" inline-prompt
-          active-text="开启" inactive-text="关闭" />
+  <div class="mobile-container">
+    <!-- 可收缩的头部控制区域 -->
+    <div class="collapsible-header" :class="{ 'collapsed': headerCollapsed }">
+      <div class="header-toggle" @click="toggleHeader" :aria-label="headerCollapsed ? '展开控制面板' : '收缩控制面板'">
+        <div class="arrow-icon" :class="{ 'rotate-icon': headerCollapsed }">▼</div>
+        <span>{{ headerCollapsed ? '展开控制面板' : '收缩控制面板' }}</span>
       </div>
-      <div ref="scrollContainer" class="chat-container" :style="{height:viewportHeight-195+'px'}">
-        <div class="chat-loop" v-for="(item, index) in voiceTexts" :key="index">
-          <div class="chat-bubble chat-bubble-send" v-if="item.voiceText && item.voiceText.trim()!==''">
-            {{ item.voiceText }}
+
+        <div class="header-content" v-show="!headerCollapsed">
+        <div class="mobile-header">
+          <div class="title-group">
+            <h4>实时语音检测并用模型(qwen3.7-plus)联网搜索回答</h4>
+            <p class="mobile-subtitle">Voice Assist Console</p>
           </div>
-          <div class="chat-bubble chat-bubble-receive" v-if="item.answerText && item.answerText.trim()!==''">
-            {{ item.answerText }}
+          <div class="header-meta">
+            <span class="meta-chip" :class="{ active: listening }">{{ listening ? '实时监听中' : '待命中' }}</span>
+            <span class="meta-chip">会话 {{ voiceTexts.length }}</span>
+            <span class="meta-chip">嘈杂环境</span>
+          </div>
+          <div class="header-actions">
+            <el-button
+              @click="toggleVAD"
+              :disabled="loading || !vad || initError"
+              :type="listening ? 'danger' : 'success'"
+              class="toggle-button"
+              :aria-label="loading ? '语音引擎准备中…' : listening ? '停止语音检测' : '开始语音检测'"
+            >
+              {{ loading ? '语音引擎准备中…' : listening ? '停止检测' : '开始检测' }}
+            </el-button>
+            <el-button v-if="initError" @click="reloadVoicePage">重新加载</el-button>
+            <button class="logout-neon-button" type="button" @click="emit('logout')" aria-label="退出登录">
+              <span class="logout-dot" aria-hidden="true"></span>
+              退出登录
+            </button>
+          </div>
+        </div>
+
+        <div class="status-area" role="status" aria-live="polite">
+          <div class="visualizer" :style="{ backgroundColor: indicatorColor }" aria-label="语音检测状态指示器">
+            <div class="visualizer-content">
+              <span class="status-dot" :class="{ active: listening }" aria-hidden="true"></span>
+              <span>检测状态:</span>
+              <span class="status-text" id="status-text">{{ statusText }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="config-section">
+          <el-form :model="formConfig" label-position="left" label-width="auto">
+            <el-form-item label="AI回答：" prop="enableAI" class="form-item-inline">
+              <el-switch
+                v-model="switchValue"
+                inline-prompt
+                active-text="开启"
+                inactive-text="关闭"
+                aria-label="启用大模型问答及语音播报"
+              />
+            </el-form-item>
+          </el-form>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-section">
+      <div ref="scrollContainer" class="chat-container" role="log" aria-label="语音对话记录">
+        <div v-if="voiceTexts.length === 0" class="chat-empty" role="note">
+          <div class="chat-empty-title">对话区已就绪</div>
+          <div class="chat-empty-desc">点击开始检测后直接说话，系统会实时识别并回答。</div>
+        </div>
+        <div class="chat-loop" v-for="(item, index) in voiceTexts" :key="index">
+          <div class="message-row row-user" v-if="item.voiceText && item.voiceText.trim()!==''" role="article" aria-label="用户消息">
+            <div class="chat-bubble chat-bubble-send">
+              <div class="message-role">你</div>
+              <div class="message-time">{{ item.time }}</div>
+              <div class="message-content">{{ formatMessageContent(item.voiceText) }}</div>
+            </div>
+            <div class="message-avatar avatar-user" aria-hidden="true">你</div>
+          </div>
+          <div class="message-row row-bot" v-if="hasAnswerContent(item) || isModelThinking(item.uuid)" role="article" aria-label="系统回复">
+            <div class="message-avatar avatar-bot" aria-hidden="true">AI</div>
+            <div class="chat-bubble chat-bubble-receive">
+              <div class="message-role">助手</div>
+              <div class="message-time">{{ item.time }}</div>
+              <div class="message-content">
+                <template v-if="hasAnswerContent(item)">
+                  {{ formatMessageContent(item.answerText) }}
+                </template>
+                <span v-else class="thinking-text">
+                  AI助手正在思考中<span class="thinking-dots" aria-hidden="true">......</span>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -30,8 +100,8 @@
 
 <script setup lang="ts">
 import { getCurrentInstance, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { MicVAD } from '@ricky0123/vad-web'
-import * as ort from 'onnxruntime-web'
+import { createVoiceDetector } from '../utils/Services/VoiceRuntime.js'
+import { NOISY_VAD_PARAMETERS, toVoiceServiceParams } from '../utils/Services/VadEnvironments.js'
 
 import VoiceText from '../utils/Entitys/VoiceText.js'
 import IatResult from '../utils/Entitys/IatResult.js'
@@ -44,6 +114,8 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
+const emit = defineEmits(['logout']);
+
 const scrollContainer = ref(null);
 
 // 状态管理
@@ -53,13 +125,66 @@ const breakUUID = ref('');
 const breakModelUUIDList = ref<string[]>([]);
 const breakSoundUUIDList = ref<string[]>([]);
 const listening = ref(false)
-const loading = ref(false)
-const statusText = ref('未开始')
+const loading = ref(true)
+const initError = ref(false)
+const initialization = new AbortController();
+const reloadVoicePage = () => window.location.reload();
+const headerCollapsed = ref(false) // 控制头部区域是否收缩
+const statusText = ref('语音引擎准备中…')
 const voiceTexts = ref<VoiceText[]>([])
 const indicatorColor = ref('#cccccc')
 
 const switchValue = ref(true)
 const selectedValue = ref('英语:')
+const formConfig = ref({
+  enableAI: true
+})
+const modelThinkingUUIDList = ref<string[]>([])
+
+const formatMessageContent = (content:string) => {
+  if (!content) {
+    return '';
+  }
+
+  return content
+    .replace(/\u2028|\u2029/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
+};
+
+const hasAnswerContent = (item: VoiceText) => Boolean(item.answerText && item.answerText.trim() !== '');
+
+const isModelThinking = (uuid: string) => modelThinkingUUIDList.value.includes(uuid);
+
+const markModelThinking = (uuid: string) => {
+  if (!isModelThinking(uuid)) {
+    modelThinkingUUIDList.value.push(uuid);
+  }
+};
+
+const clearModelThinking = (uuid: string) => {
+  const index = modelThinkingUUIDList.value.findIndex(item => item === uuid);
+  if (index > -1) {
+    modelThinkingUUIDList.value.splice(index, 1);
+  }
+};
+
+const clearInterruptedThinking = (activeUUID: string) => {
+  if (modelThinkingUUIDList.value.length < 1) {
+    return;
+  }
+  const interruptedUUIDList = modelThinkingUUIDList.value.filter(item => item !== activeUUID);
+  if (interruptedUUIDList.length < 1) {
+    return;
+  }
+  interruptedUUIDList.forEach((uuid) => {
+    clearModelThinking(uuid);
+    if (!breakModelUUIDList.value.includes(uuid)) {
+      breakModelUUIDList.value.push(uuid);
+    }
+  });
+};
 
 const numContent = ref(5); //关联上下文
 
@@ -84,26 +209,115 @@ const playSoundStatus = ref(false);
 const playPause = ref(0);
 const playPauseSound = ref<any>(null);
 const isContinue = ref(false);
+const micStreamRef = ref<MediaStream | null>(null);
+const micStreamPending = ref<Promise<MediaStream> | null>(null);
 
 const startTime = ref<number>(0);
 
-// 获取浏览器可见区域高度
-const viewportHeight = window.innerHeight;
+const vadDebugLog = (...args:any[]) => {
+  console.log('[VAD mic]', ...args);
+};
+
+const isLiveStream = (stream: MediaStream | null | undefined): stream is MediaStream => {
+  if (!stream) {
+    return false;
+  }
+  const audioTracks = stream.getAudioTracks();
+  if (!audioTracks || audioTracks.length === 0) {
+    return false;
+  }
+  return audioTracks.some(track => track.readyState === 'live');
+};
+
+const setMicEnabled = (stream: MediaStream, enabled: boolean) => {
+  stream.getAudioTracks().forEach(track => {
+    track.enabled = enabled;
+  });
+};
+
+const requestNewMicStream = async () => {
+  vadDebugLog('requesting new media stream');
+  return await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      autoGainControl: true,
+      noiseSuppression: true,
+    },
+  });
+};
+
+const acquireMicStream = async () => {
+  if (micStreamPending.value) {
+    vadDebugLog('awaiting pending media stream');
+    return await micStreamPending.value;
+  }
+
+  if (isLiveStream(micStreamRef.value)) {
+    vadDebugLog('reusing cached live media stream');
+    return micStreamRef.value;
+  }
+
+  micStreamPending.value = requestNewMicStream()
+    .then((stream) => {
+      micStreamRef.value = stream;
+      vadDebugLog('media stream acquired');
+      return stream;
+    })
+    .finally(() => {
+      micStreamPending.value = null;
+    });
+
+  return await micStreamPending.value;
+};
+
+const releaseMicStream = async () => {
+  if (micStreamPending.value) {
+    try {
+      await micStreamPending.value;
+    } catch {
+      // ignore pending request failures during release
+    } finally {
+      micStreamPending.value = null;
+    }
+  }
+
+  if (micStreamRef.value) {
+    vadDebugLog('releasing media stream');
+    micStreamRef.value.getTracks().forEach(track => {
+      if (track.readyState !== 'ended') {
+        track.stop();
+      }
+    });
+    micStreamRef.value = null;
+  }
+};
+
+// 切换头部区域收缩状态
+const toggleHeader = () => {
+  headerCollapsed.value = !headerCollapsed.value
+}
 
 // 切换检测状态
 const toggleVAD = async () => {
-  ///
-  if(!audioContext.value)
-    audioContext.value = new (window.AudioContext || (window as any).webkitAudioContext)();
-
+  if (loading.value || !vad.value || initError.value) return;
   if (listening.value) {
     await vad.value.pause()
     closeVoicePlayThread();
     listening.value = false
     statusText.value = '已停止'
     indicatorColor.value = '#cccccc'
+    modelThinkingUUIDList.value = [];
   } else {
-    await vad.value.start();
+    try {
+      await vad.value.start();
+    } catch (err) {
+      initError.value = true;
+      statusText.value = '语音启动失败，请检查麦克风权限后重新加载';
+      console.error('VAD启动错误:', err);
+      return;
+    }
+    if (initialization.signal.aborted) return;
     VoicePlayThread();
     listening.value = true;
     voiceService.value.resetDecibel();
@@ -111,12 +325,12 @@ const toggleVAD = async () => {
     
     ///开场白展示及播报
     if (instance.appContext.config.globalProperties.$isOpeningRemarks == 'true') {
+      const openUUID = instance.appContext.config.globalProperties.$uuid();
       const voiceText = new VoiceText(
           dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
-          '', '', 0);
+          openUUID, '', 0);
       voiceText.addVoiceAnswer(instance.appContext.config.globalProperties.$openingRemarks,false);
-      audioService.value.AddSendContentToAudio(instance.appContext.config.globalProperties.$uuid(), 
-        voiceText.answerText, false);
+      audioService.value.AddSendContentToAudio(openUUID, voiceText.answerText, false);
       voiceTexts.value.push(voiceText);
     }
   }
@@ -126,25 +340,52 @@ const toggleVAD = async () => {
 const initVAD = async () => {
   try {
     loading.value = true;
-    
-    // 配置ONNX运行时
-    // ort.env.wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/' //测试环境
-    ort.env.wasm.wasmPaths = '/onnxruntime/'  //正式环境
-    ort.env.logLevel = 'error';
-  
-    soundEncode.value = instance.appContext.config.globalProperties.$audioEncode;
 
-    voiceService.value = new VoiceService(0.7, 0.45, 5, 32, 250,
+    soundEncode.value = instance.appContext.config.globalProperties.$audioEncodeMobile;
+
+    ///初始化声音处理服务
+    if(!audioContext.value)
+      audioContext.value = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+    voiceService.value = new VoiceService(...toVoiceServiceParams(NOISY_VAD_PARAMETERS),
       instance, showVociceText, breakAnswer, inputVolume);
-    audioService.value = new AudioService(textToTTSCallBack);
+    audioService.value = new AudioService(textToTTSCallBack, soundEncode.value);
     
     // 创建VAD实例
-    vad.value = await MicVAD.new({
-      model: 'v5', // 使用v5模型
+    vad.value = await createVoiceDetector({
+      audioContext: audioContext.value,
+      getStream: async () => {
+        const stream = await acquireMicStream();
+        setMicEnabled(stream, true);
+        return stream;
+      },
+      pauseStream: async (stream: MediaStream) => {
+        setMicEnabled(stream, false);
+        vadDebugLog('pause stream (tracks disabled)');
+      },
+      resumeStream: async (stream: MediaStream) => {
+        if (isLiveStream(stream)) {
+          micStreamRef.value = stream;
+          setMicEnabled(stream, true);
+          vadDebugLog('resume stream with provided live stream');
+          return stream;
+        }
+
+        if (isLiveStream(micStreamRef.value)) {
+          setMicEnabled(micStreamRef.value, true);
+          vadDebugLog('resume stream with cached live stream');
+          return micStreamRef.value;
+        }
+
+        vadDebugLog('stream invalid, requesting replacement stream');
+        const newStream = await acquireMicStream();
+        setMicEnabled(newStream, true);
+        return newStream;
+      },
       processorType : 'auto',
-      startOnLoad : false,
       // 帧处理回调 - 实时更新状态
       onFrameProcessed: (probs, frame) => {
+        if(loading.value) return;
         //16000每帧32ms音频
         voiceService.value.voiceTranslate(probs, frame);
       },
@@ -152,16 +393,15 @@ const initVAD = async () => {
       onSpeechStart: () => {},
       onSpeechEnd: (audio: Float32Array) => {},
       onSpeechRealStart: () => {},
-      // 资源路径配置
-      // baseAssetPath: '/node_modules/@ricky0123/vad-web/dist/', //测试环境
-      // onnxWASMBasePath: '/node_modules/onnxruntime-web/dist/', //测试环境
-      baseAssetPath: '/models/',          //正式环境
-      onnxWASMBasePath: '/onnxruntime/',  //正式环境
-    });
+    }, initialization.signal);
     
+    statusText.value = '语音引擎已就绪';
     loading.value = false
   } catch (err) {
+    if (initialization.signal.aborted) return;
     loading.value = false
+    initError.value = true;
+    statusText.value = '语音引擎加载失败，请检查网络后重新加载';
     console.error('VAD初始化错误:', err)
   }
 }
@@ -268,6 +508,8 @@ const translateToOtherLanguage = async (uuid) => {
 
   const index = voiceTexts.value.findIndex(voiceText => voiceText.isMine(uuid));
   if (index > -1) {
+    markModelThinking(uuid);
+
     const beContext = [];
     if (numContent.value > 1 && index > 1) {
       let iNum=index-numContent.value+1>-1?index-numContent.value+1:0;
@@ -277,7 +519,7 @@ const translateToOtherLanguage = async (uuid) => {
       }
     }
 
-    aiAgent.sendQuestion(uuid, "deepseek-v3.1", system, 
+    aiAgent.sendQuestion(uuid, "qwen3.8-flash", system, 
       voiceTexts.value[index].voiceText, 
       voiceTexts.value[index].targetLang,
       translateCallBack,
@@ -286,6 +528,9 @@ const translateToOtherLanguage = async (uuid) => {
         temperature:0,
         enable_search:true,
         beContext:beContext
+      }).catch((err) => {
+        clearModelThinking(uuid);
+        console.error('大模型请求失败:', err);
       });
   } else {
     console.error("-".repeat(10) + "语音翻译查找待识别文本时失败！" + "-".repeat(10));
@@ -296,6 +541,11 @@ const translateToOtherLanguage = async (uuid) => {
  * 文本翻译回调函数
  */
 const translateCallBack = async (uuid, content, isAnswer) => {
+  const hasModelContent = content !== undefined && content !== null && content !== '';
+  if (hasModelContent || !isAnswer) {
+    clearModelThinking(uuid);
+  }
+
   let indexBreak = breakModelUUIDList.value.findIndex(item => item == uuid);
   if(indexBreak > -1) {
     if(!isAnswer) {
@@ -376,7 +626,7 @@ const VoicePlayThread = () => {
     } else if (soundEncode.value == 'MP3') {
       mp3Player();
     }
-  },100);
+  },10);
 }
 
 /**
@@ -384,17 +634,22 @@ const VoicePlayThread = () => {
  */
 const pcmPlayer = () => {
   try {
+    if(audioContext.value.state === 'suspended') {
+      audioContext.value.resume();
+    }
+
     /// 续播及新播逻辑，未查到数据直接返回
     playPauseSound.value = GetVoicePlay();
     if (!playPauseSound.value) {
       return;
     }
-    play_Num.value = playPauseSound.value.uuidNum;
-    play_UUID.value = playPauseSound.value.uuidOrg;
 
     if(playPauseSound.value.uuidFlag === 'true') {
       play_Num.value = 0;
       play_UUID.value = '';
+    } else {
+      play_Num.value = playPauseSound.value.uuidNum;
+      play_UUID.value = playPauseSound.value.uuidOrg;
     }
 
     audioBufferSource.value = audioContext.value.createBufferSource();
@@ -415,6 +670,7 @@ const pcmPlayer = () => {
       playSoundStatus.value = false;
     };
   } catch (err) {
+    console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
     if(audioBufferSource.value)
       audioBufferSource.value.disconnect();
     audioBufferSource.value = null;
@@ -426,7 +682,7 @@ const pcmPlayer = () => {
 }
 
 /**
- * MP3播放器
+ * MP3播放器 - 兼容微信浏览器
  */
 const mp3Player = () => {
   try {
@@ -436,6 +692,40 @@ const mp3Player = () => {
         if(playPauseSound.value.SoundAll instanceof Blob) {
           audioUrl.value = (webkitURL||window.URL).createObjectURL(playPauseSound.value.SoundAll)
           audioObj.value = new Audio(audioUrl.value);
+
+          // 微信浏览器兼容性处理
+          let audioLoaded = false;
+          let canPlayTriggered = false;
+
+          const onLoaded = () => {
+            audioLoaded = true;
+            attemptPlay();
+          };
+
+          const onCanPlay = () => {
+            canPlayTriggered = true;
+            attemptPlay();
+          };
+
+          const attemptPlay = () => {
+            if (audioLoaded && canPlayTriggered && !playSoundStatus.value) {
+              // 移除事件监听器避免重复触发
+              audioObj.value.removeEventListener('loadeddata', onLoaded);
+              audioObj.value.removeEventListener('canplaythrough', onCanPlay);
+
+              // 微信浏览器可能需要微小延迟
+              setTimeout(() => {
+                mp3Play();
+              }, 50);
+            }
+          };
+
+          // 添加多个加载事件监听
+          audioObj.value.addEventListener('loadeddata', onLoaded, { once: true });
+          audioObj.value.addEventListener('canplaythrough', onCanPlay, { once: true });
+
+          // 设置预加载
+          audioObj.value.preload = 'auto';
           audioObj.value.load();
         } else {
           console.log('-'.repeat(10) + '音频数据格式错误，非Blob格式!' + '-'.repeat(10));
@@ -449,29 +739,8 @@ const mp3Player = () => {
         console.log('-'.repeat(10) + '续播失败!' + '-'.repeat(10));
         return;
       }
-    }
-
-    audioObj.value.onended = () => {
-      audioObj.value = null;
-      (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
-      audioUrl.value = null;
-      playSoundStatus.value = false;
-    };
-    audioObj.value.play().catch((error) => {
-      console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), error);
-    });
-
-    playSoundStatus.value = true;
-    
-    play_Num.value = playPauseSound.value.uuidNum;
-    play_UUID.value = playPauseSound.value.uuidOrg;
-
-    breakUUID.value = '';
-    breakFlag.value = false;
-
-    if(playPauseSound.value.uuidFlag === 'true') {
-      play_Num.value = 0;
-      play_UUID.value = '';
+      playSoundStatus.value = true;
+      mp3Play();
     }
   } catch(err) {
     console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
@@ -486,13 +755,78 @@ const mp3Player = () => {
 }
 
 /**
+ * 解决微信浏览器下第一次播放失败的问题
+ */
+const mp3Play = () => {
+  if (!audioObj.value) return;
+
+  audioObj.value.onended = () => {
+    audioObj.value = null;
+    (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
+    audioUrl.value = null;
+    playSoundStatus.value = false;
+  };
+
+  const playAudio = () => {
+    if (!audioObj.value) return;
+
+    const playPromise = audioObj.value.play();
+
+    if (playPromise !== undefined) {
+      playPromise.catch((error: any) => {
+        console.error('-'.repeat(10) + '播放失败，尝试重试：' + '-'.repeat(10), error);
+
+        // 微信浏览器常见错误：播放被阻止，尝试重新加载
+        if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+          // 延迟后重试
+          setTimeout(() => {
+            if (audioObj.value) {
+              audioObj.value.load();
+              audioObj.value.play().catch((retryError: any) => {
+                console.error('-'.repeat(10) + '重试播放失败：' + '-'.repeat(10), retryError);
+                playSoundStatus.value = false;
+              });
+            }
+          }, 100);
+        } else {
+          playSoundStatus.value = false;
+        }
+      });
+    }
+  };
+
+  play_Num.value = playPauseSound.value.uuidNum;
+  play_UUID.value = playPauseSound.value.uuidOrg;
+  breakUUID.value = '';
+  breakFlag.value = false;
+  if(playPauseSound.value.uuidFlag === 'true') {
+    play_Num.value = 0;
+    play_UUID.value = '';
+  }
+
+  playSoundStatus.value = true;
+
+  // 确保音频有足够时间缓冲
+  if (audioObj.value.readyState >= 2) { // HAVE_CURRENT_DATA
+    playAudio();
+  } else {
+    // 等待音频加载完成
+    const onCanPlay = () => {
+      audioObj.value.removeEventListener('canplay', onCanPlay);
+      setTimeout(playAudio, 50); // 微信浏览器可能需要微小延迟
+    };
+    audioObj.value.addEventListener('canplay', onCanPlay);
+  }
+}
+
+/**
  * 获取应该播放的
  */
 const GetVoicePlay = ():AudioSound => {
   if(audioSounds.value.length < 1)
     return null;
   let indexAudioSound = -1;
-  if(play_UUID.value == '') {
+  if(play_UUID.value === '') {
     indexAudioSound = audioSounds.value.findIndex(audioSound => audioSound.uuidNum == 1);
   } else {
     indexAudioSound = audioSounds.value.findIndex(
@@ -576,6 +910,7 @@ const breakSuccess = async (uuid) => {
 
   play_Num.value = 0;
   play_UUID.value = '';
+  clearInterruptedThinking(uuid);
   
   if(audioSounds.value.length > 0) {
     for(let i=audioSounds.value.length-1; i>-1; i--) {
@@ -640,124 +975,17 @@ watch(
 
 // 组件卸载时清理
 onUnmounted(async () => {
-  if (vad.value) {
-    await vad.value.destroy()
-  }
-  if (audioContext.value) {
+  initialization.abort();
+  try {
+    await vad.value?.destroy();
+  } finally {
+    await releaseMicStream();
+    const context = audioContext.value;
     audioContext.value = null;
-    if(audioBufferSource.value) {
-      audioBufferSource.value.stop();
-    }
-  }
-  if(audioObj.value) {
-    audioObj.value.stop();
+    audioObj.value?.pause();
+    if (context && context.state !== 'closed') await context.close();
   }
 })
 </script>
 
-<style scoped>
-.vad-detector {
-  flex: 1;
-  width: 100%;
-}
-
-button {
-  padding: 4px 16px;
-  background: #42b983;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-button:disabled {
-  background: #cccccc;
-  cursor: not-allowed;
-}
-
-.error {
-  color: #ff4444;
-}
-
-.visualizer {
-  height: 25px;
-  margin-top: 10px;
-  border-radius: 4px;
-  transition: background-color 0.1s ease;
-}
-
-/* 聊天容器：优化背景和内边距 */
-.chat-container {
-  margin: 0px auto;
-  padding: 15px;
-  background-color: #f8f9fa;
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1); /* 容器阴影，提升层次感 */
-  font-family: "Microsoft Yahei", sans-serif;
-
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* 通用气泡样式：增强效果 */
-.chat-bubble {
-  max-width: 75%;
-  padding: 10px 14px;
-  margin: 10px 0;
-  border-radius: 16px;
-  line-height: 1.5;
-  word-wrap: break-word;
-  position: relative;
-  color: #333;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08); /* 气泡阴影，更立体 */
-  transition: all 0.2s ease; /* 过渡效果，提升交互体验 */
-}
-
-/* 接收方气泡：调整背景色 */
-.chat-bubble-receive {
-  float: left;
-  clear: both;
-  text-align: left;
-  background-color: #ffffff;
-  border: 1px solid #e9ecef; /* 增加边框，区分背景 */
-}
-
-/* 接收方箭头：优化颜色，与边框匹配 */
-.chat-bubble-receive::before {
-  content: "";
-  position: fixed;
-  left: -8px;
-  top: 14px;
-  border-top: 6px solid transparent;
-  border-right: 8px solid #ffffff; /* 气泡背景色 */
-  border-bottom: 6px solid transparent;
-  /* 箭头边框阴影，与气泡边框衔接 */
-  filter: drop-shadow(-1px 0px 0px #e9ecef);
-}
-
-/* 发送方气泡：优化背景色 */
-.chat-bubble-send {
-  float: right;
-  clear: both;
-  text-align: left;
-  background-color: #3EB575;
-  color: #000;
-}
-
-/* 发送方箭头：优化颜色 */
-.chat-bubble-send::before {
-  content: "";
-  position: absolute;
-  right: -8px;
-  top: 14px;
-  border-top: 6px solid transparent;
-  border-left: 8px solid #3EB575;
-  border-bottom: 6px solid transparent;
-}
-
-/* 气泡 hover 效果：轻微缩放，增强交互 */
-.chat-bubble:hover {
-  transform: scale(1.01);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
-}
-</style>
+<style scoped src="./HelloWorld_Mobile.css"></style>

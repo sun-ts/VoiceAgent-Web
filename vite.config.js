@@ -5,25 +5,52 @@ import path from 'node:path'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './',
+  base: '/',
   plugins: [vue()],
+  resolve: {
+    alias: [
+      // vad-web 0.0.30 has no MicVAD modelFetcher option. Redirect only its
+      // internal loader to our shared fetch cache; never patch global fetch.
+      {
+        find: './default-model-fetcher',
+        replacement: path.resolve(__dirname, 'src/utils/Services/VoiceModelFetcher.js'),
+        customResolver(replacement, importer) {
+          if (importer?.replaceAll('\\', '/').includes('/@ricky0123/vad-web/')) return replacement;
+          return this.resolve('./default-model-fetcher', importer, { skipSelf: true });
+        },
+      },
+    ],
+  },
   // 3. 依赖预构建：兼容vad-web/onnxruntime-web
   optimizeDeps: {
-    include: ['@ricky0123/vad-web', 'onnxruntime-web'],
-    exclude: ['onnxruntime-web/wasm'] // 排除WASM，避免预构建报错
+    include: ['@ricky0123/vad-web', 'onnxruntime-web/wasm'],
+    esbuildOptions: {
+      plugins: [{
+        name: 'shared-vad-model-fetcher',
+        setup(build) {
+          build.onResolve({ filter: /^\.\/default-model-fetcher$/ }, ({ importer }) => {
+            if (importer.replaceAll('\\', '/').includes('/@ricky0123/vad-web/')) {
+              // Keep one cache shared with app source instead of bundling a copy.
+              return { path: 'shared-model-fetcher', namespace: 'vad-model-fetcher' };
+            }
+          });
+          build.onLoad({ filter: /.*/, namespace: 'vad-model-fetcher' }, () => ({
+            contents: 'export { defaultModelFetcher } from "/src/utils/Services/VoiceModelFetcher.js";',
+            loader: 'js',
+          }));
+          build.onResolve({ filter: /^\/src\/utils\/Services\/VoiceModelFetcher\.js$/ }, ({ path }) => ({
+            path, external: true,
+          }));
+        },
+      }],
+    },
   },
   build: {
     outDir: 'dist', // 打包输出目录（固定）
     assetsDir: 'assets', // 业务资源目录
     copyPublicDir: true, // 强制复制public目录（不可关闭！）
-    rollupOptions: {
-      output: {
-        // 拆分chunk，减小主包体积，Tomcat加载更快
-        manualChunks: {
-          vad: ['@ricky0123/vad-web', 'onnxruntime-web']
-        }
-      }
-    },
+    // Dynamic imports separate the login page, voice UI and WASM-only runtime.
+    // Do not force the full ONNX backend into an eagerly shared chunk.
     commonjsOptions: {
       transformMixedEsModules: true // 兼容ESM/CommonJS混合模块
     },

@@ -7,7 +7,7 @@ import XfWebSocketTool from '../WebSocket/XfWebSocketTool.js';
  * 语音处理类
  */
 class AudioService {
-    constructor(callBack) {
+    constructor(callBack,soundEncode) {
         this.splitWord = /((?<!\d)[.:：](?!\d)|[。,，!！?？;；])+/g;
 
         this.webSockets = [];
@@ -17,6 +17,8 @@ class AudioService {
         this.clocks = [];
 
         this.callBack = callBack;
+
+        this.soundEncode = soundEncode;
     }
 
     /**
@@ -129,7 +131,7 @@ class AudioService {
         }
 
         let webSocket = new WebSocketSendTool(uuid, 
-            new XfWebSocketTool('TTS'), this.callBack);
+            new XfWebSocketTool('TTS', this.soundEncode), this.callBack);
         webSocket.addSendList(sendText, 2);
         
         this.webSockets.push(webSocket);

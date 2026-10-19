@@ -58,6 +58,8 @@ class AiAgentService {
             enable_search: config.enable_search
         });
 
+        let reasoningContent = '';
+
         /// 流式输出数据
         for await (const chunk of stream) {
             if (!this.loopFlag) break;

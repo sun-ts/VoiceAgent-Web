@@ -2,8 +2,10 @@ import CryptoJS from 'crypto-js';
 import { Base64 } from 'js-base64';
 
 class XfWebSocketTool {
-    constructor(ConfigFlag) {
+    constructor(ConfigFlag, soundEncode) {
         this.ConfigFlag = ConfigFlag;
+
+        this.soundEncode = soundEncode;
 
         //// APPID、APPKEY、APPSECRET数据初始化
         this.Config = {};
@@ -28,7 +30,7 @@ class XfWebSocketTool {
             this.Config.host = import.meta.env.VITE_XFTTS_HOST;
             this.Config.uri = import.meta.env.VITE_XFTTS_URI;
 
-            this.Config.encoding = import.meta.env.VITE_XFTTS_ENCODING;
+            this.Config.encoding = soundEncode;
         }
     }
 

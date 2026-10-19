@@ -1,0 +1,345 @@
+基于 Element UI plus 的 Web 前端 UI 规范
+一、总体设计原则
+1.1 一致性原则
+所有组件遵循 Element UI 设计语言
+保持交互和视觉一致性
+统一的状态反馈机制
+
+1.2 可用性原则
+清晰的操作反馈
+合理的默认值设置
+友好的错误提示
+必要的操作确认
+
+1.3 响应式原则
+支持主流分辨率适配
+移动端优先考虑
+渐进增强体验
+
+二、组件使用规范
+2.1 布局组件
+2.1.1 Container 布局容器
+text
+结构顺序：el-container > el-header/el-aside > el-main
+高度设置：页面容器使用100vh，内容区自适应
+间距规范：内边距统一为20px
+背景颜色：主内容区 #f0f2f5，内容卡片 #ffffff
+2.1.2 Grid 栅格系统
+text
+使用规范：优先使用 el-row/el-col 进行布局
+栅格间隔：统一使用 gutter="20"
+响应断点：xs(<768px) sm(≥768px) md(≥992px) lg(≥1200px) xl(≥1920px)
+2.2 基础表单组件
+2.2.1 Form 表单
+text
+标签位置：label-position="right"
+标签宽度：label-width="120px"
+表单尺寸：size="medium"
+验证触发：trigger="blur"（输入类）、trigger="change"（选择类）
+必填标识：使用红色星号，通过CSS :before 实现
+2.2.2 Input 输入框
+text
+使用规范：
+- 必填字段添加 clearable 属性
+- 限制长度字段添加 show-word-limit
+- 密码框使用 show-password
+- 搜索框使用 suffix-icon="el-icon-search"
+
+尺寸规范：
+- 大尺寸：width="400px"（重要表单）
+- 中尺寸：width="300px"（常规输入）
+- 小尺寸：width="200px"（次要输入）
+2.2.3 Select 选择器
+text
+使用规范：
+- 多选使用 multiple
+- 可搜索使用 filterable
+- 远程搜索使用 remote
+- 创建条目使用 allow-create
+
+选项规范：
+- 选项值使用英文或拼音
+- 选项标签使用中文
+- 超过10个选项使用分组
+2.3 数据展示组件
+2.3.1 Table 表格
+text
+基础属性：
+- stripe：斑马纹
+- border：边框
+- size="medium"：中等尺寸
+- v-loading：加载状态
+
+列定义规范：
+- 序号列：width="80"，align="center"
+- 操作列：width="200"，fixed="right"
+- 状态列：使用标签展示
+- 时间列：格式化显示
+
+分页规范：
+- 页面大小：[10, 20, 50, 100]
+- 布局：total, sizes, prev, pager, next, jumper
+2.3.2 Tag 标签
+text
+类型使用：
+- success：成功/完成状态
+- info：信息/默认状态
+- warning：警告/待处理
+- danger：错误/危险
+
+大小规范：
+- 大标签：高度32px
+- 中标签：高度28px（默认）
+- 小标签：高度24px
+2.4 反馈组件
+2.4.1 Message 消息提示
+text
+成功提示：duration=2000，showClose=true
+错误提示：duration=3000，showClose=true
+警告提示：duration=2500，showClose=true
+位置规范：页面顶部居中
+2.4.2 Dialog 对话框
+text
+尺寸规范：
+- 小对话框：width="400px"
+- 中对话框：width="600px"（默认）
+- 大对话框：width="800px"
+
+行为规范：
+- close-on-click-modal="false"
+- close-on-press-escape="false"
+- 关闭时重置表单
+
+按钮位置：右下角对齐，取消按钮在左，确定按钮在右
+2.4.3 MessageBox 消息框
+text
+确认对话框：
+- type="warning"
+- confirmButtonText="确定"
+- cancelButtonText="取消"
+- closeOnClickModal=false
+
+删除确认：
+- 标题："删除确认"
+- 内容："确定要删除吗？删除后数据将无法恢复"
+2.5 导航组件
+2.5.1 Menu 菜单
+text
+侧边菜单：
+- background-color="#304156"
+- text-color="#bfcbd9"
+- active-text-color="#409EFF"
+
+水平菜单：
+- mode="horizontal"
+- background-color="#ffffff"
+2.5.2 Breadcrumb 面包屑
+text
+使用规范：
+- 超过3级时隐藏中间级
+- 最后一项不可点击
+- 分隔符使用 ">"
+三、交互行为规范
+3.1 表单交互
+text
+提交行为：
+1. 表单验证通过后显示 loading 状态
+2. 提交成功后显示成功消息
+3. 提交失败显示具体错误信息
+4. loading 状态持续到请求完成
+
+重置行为：
+1. 清空表单数据
+2. 重置验证状态
+3. 不触发网络请求
+3.2 表格交互
+text
+搜索行为：
+1. 输入框支持回车搜索
+2. 搜索按钮点击搜索
+3. 搜索时显示 loading
+4. 清空搜索条件重置表格
+
+排序行为：
+1. 点击表头排序
+2. 排序时重新加载数据
+3. 多字段排序按最后点击的字段排序
+
+分页行为：
+1. 改变页数时加载对应数据
+2. 改变页大小时重置到第一页
+3. 保持其他搜索条件不变
+3.3 弹窗交互
+text
+打开行为：
+1. 点击触发按钮打开
+2. 显示遮罩层
+3. 禁用背景滚动
+
+关闭行为：
+1. 点击确定按钮关闭并提交
+2. 点击取消按钮关闭不提交
+3. 点击遮罩层不关闭（需确认）
+4. 按ESC键不关闭（需确认）
+四、样式规范
+4.1 颜色规范
+text
+主色调：
+- 主题色：#409EFF（Element UI 蓝色）
+- 成功色：#67C23A
+- 警告色：#E6A23C
+- 危险色：#F56C6C
+- 信息色：#909399
+
+背景色：
+- 页面背景：#f0f2f5
+- 卡片背景：#ffffff
+- 头部背景：#304156
+- 表格头部：#f5f7fa
+
+文字色：
+- 主要文字：#303133
+- 常规文字：#606266
+- 次要文字：#909399
+- 占位文字：#c0c4cc
+4.2 间距规范
+text
+基础单位：8px
+小间距：8px
+中间距：16px
+大间距：24px
+
+内边距：
+- 卡片内边距：20px
+- 表单内边距：20px
+- 表格内边距：16px
+- 弹窗内边距：30px
+
+外边距：
+- 组件间隔：20px
+- 区块间隔：24px
+- 页面边距：20px
+4.3 字体规范
+text
+字体家族：
+- 英文：-apple-system, BlinkMacSystemFont
+- 中文："PingFang SC", "Microsoft YaHei"
+
+字号规范：
+- 大标题：20px（加粗）
+- 标题：18px（加粗）
+- 小标题：16px（加粗）
+- 正文：14px（常规）
+- 辅助文字：12px（常规）
+- 极小文字：10px（常规）
+
+行高规范：
+- 单行文本：1.5倍行高
+- 多行文本：1.8倍行高
+4.4 圆角规范
+text
+小圆角：4px（按钮、输入框）
+中圆角：8px（卡片、弹窗）
+大圆角：12px（特殊卡片）
+全圆角：50%（头像、圆形按钮）
+4.5 阴影规范
+text
+浅阴影：0 2px 4px rgba(0,0,0,0.1)（卡片）
+中阴影：0 4px 8px rgba(0,0,0,0.12)（悬浮）
+深阴影：0 8px 16px rgba(0,0,0,0.14)（弹窗）
+五、响应式规范
+5.1 断点设置
+text
+移动端：<768px
+平板端：≥768px
+桌面端：≥992px
+大桌面：≥1200px
+超大桌面：≥1920px
+5.2 布局适配
+text
+移动端适配：
+- 单列布局
+- 简化导航
+- 增大点击区域
+- 隐藏非必要内容
+
+表格响应：
+- 水平滚动
+- 隐藏次要列
+- 行内详情展开
+六、代码规范
+6.1 组件引入
+text
+按需引入，禁止全局引入：
+import { Button, Input } from 'element-ui'
+Vue.use(Button)
+Vue.use(Input)
+6.2 属性顺序
+text
+1. 指令属性（v-model, v-if, v-for）
+2. 普通属性（size, type, disabled）
+3. 事件绑定（@click, @change）
+4. 原生事件（@keyup.enter）
+6.3 方法命名
+text
+点击事件：handle + 操作 + 对象
+示例：handleAddUser, handleEditItem, handleDeleteConfirm
+
+表单方法：validateForm, resetForm, submitForm
+
+数据方法：loadData, refreshData, updateData
+6.4 状态管理
+text
+加载状态：loading
+提交状态：submitting
+禁用状态：disabled
+显示状态：visible/dialogVisible
+七、无障碍规范
+7.1 键盘导航
+text
+支持 Tab 键导航
+支持 Enter 键提交
+支持 ESC 键关闭
+支持方向键选择
+7.2 屏幕阅读器
+text
+添加 aria-label
+设置 role 属性
+保持焦点管理
+提供文字替代
+八、性能优化
+8.1 组件优化
+text
+大列表使用虚拟滚动
+复杂表单使用懒加载
+弹窗内容延迟渲染
+图片使用懒加载
+8.2 代码优化
+text
+组件按需加载
+函数防抖节流
+避免重复渲染
+合理使用缓存
+九、版本管理
+9.1 依赖版本
+text
+Element UI：^2.15.14
+Vue：^2.6.14
+Vue Router：^3.5.3
+Vuex：^3.6.2
+9.2 更新策略
+text
+小版本：自动更新
+中版本：评估后更新
+大版本：项目级评估
+十、异常处理
+10.1 网络异常
+text
+超时处理：15秒超时
+重试机制：最多3次
+降级方案：显示友好提示
+10.2 数据异常
+text
+空状态处理
+错误数据过滤
+边界情况处理

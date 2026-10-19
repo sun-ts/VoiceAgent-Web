@@ -1,11 +1,47 @@
 <script setup>
-import { ref, onMounted } from 'vue';
-import HelloWorld from './components/HelloWorld.vue'
-import HelloWorld_Mobile from './components/HelloWorld_Mobile.vue'
+import { defineAsyncComponent, getCurrentInstance, ref, onMounted } from 'vue';
+import LoginPortal from './components/LoginPortal.vue';
+import VoicePageStatus from './components/VoicePageStatus.vue';
+
+const app = getCurrentInstance().appContext.app;
+let voiceUIPromise;
+const loadVoiceUI = () => {
+  if (!voiceUIPromise) {
+    voiceUIPromise = Promise.all([
+      import('element-plus'),
+      import('element-plus/dist/index.css'),
+    ]).then(([{ default: ElementPlus }]) => {
+      app.use(ElementPlus);
+    }).catch((error) => {
+      voiceUIPromise = undefined;
+      throw error;
+    });
+  }
+  return voiceUIPromise;
+};
+
+const voicePage = (loader) => defineAsyncComponent({
+  loader: async () => {
+    const [, page] = await Promise.all([loadVoiceUI(), loader()]);
+    return page.default;
+  },
+  loadingComponent: VoicePageStatus,
+  errorComponent: VoicePageStatus,
+  delay: 0,
+});
+const HelloWorld = voicePage(() => import('./components/HelloWorld.vue'));
+const HelloWorld_Mobile = voicePage(() => import('./components/HelloWorld_Mobile.vue'));
 
 const is_Mobile = ref(null);
 
 const is_wx = ref(null);
+const isAuthed = ref(false);
+const loginError = ref('');
+const loggingIn = ref(false);
+
+const sessionKey = 'voice-client-login';
+const loginUsername = import.meta.env.VITE_LOGIN_USERNAME;
+const loginPassword = import.meta.env.VITE_LOGIN_PASSWORD;
 
 // 判断是否为手机端
 const isMobile = () => {
@@ -30,25 +66,111 @@ const isMobile = () => {
 
 onMounted(() => {
   is_Mobile.value = isMobile();
+  const hasCredentials = !!loginUsername && !!loginPassword;
+
+  if (!hasCredentials) {
+    loginError.value = '未配置登录账号，请先在 .env 设置账号密码。';
+    return;
+  }
+
+  isAuthed.value = sessionStorage.getItem(sessionKey) === '1';
 });
+
+const handleLogin = ({ username, password }) => {
+  if (!loginUsername || !loginPassword) {
+    loginError.value = '未配置登录账号，请先在 .env 设置账号密码。';
+    return;
+  }
+
+  loggingIn.value = true;
+
+  if (username === loginUsername && password === loginPassword) {
+    isAuthed.value = true;
+    loginError.value = '';
+    sessionStorage.setItem(sessionKey, '1');
+  } else {
+    loginError.value = '用户名或密码错误，请重试。';
+    sessionStorage.removeItem(sessionKey);
+  }
+
+  loggingIn.value = false;
+};
+
+const handleLogout = () => {
+  isAuthed.value = false;
+  loginError.value = '';
+  sessionStorage.removeItem(sessionKey);
+};
+
+const currentYear = new Date().getFullYear();
+const copyrightText = `Copyright © ${currentYear} 闪码科技（云南）`;
 </script>
 
 <template>
-  <HelloWorld v-if="is_Mobile===false" msg="Vite + Vue" />
-  <HelloWorld_Mobile v-if="is_Mobile===true" :is_wx="is_wx" msg="Vite + Vue" />
+  <div class="app-shell">
+    <main class="app-content">
+      <div v-if="is_Mobile === null" class="app-loading">识别终端中...</div>
+      <LoginPortal
+        v-else-if="!isAuthed"
+        :is-mobile="is_Mobile"
+        :error-message="loginError"
+        :disabled="loggingIn"
+        @submit="handleLogin"
+      />
+      <HelloWorld v-else-if="is_Mobile === false" msg="Vite + Vue" @logout="handleLogout" />
+      <HelloWorld_Mobile v-else :is_wx="is_wx" msg="Vite + Vue" @logout="handleLogout" />
+    </main>
+    <footer class="app-copyright">
+      <a
+        class="copyright-link"
+        href="https://dancecoder.cn"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {{ copyrightText }}
+      </a>
+    </footer>
+  </div>
 </template>
 
 <style scoped>
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+
+.app-content {
+  min-height: 0;
+  overflow: auto;
 }
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #42b883aa);
+
+.app-loading {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  color: #d7e8ff;
+  letter-spacing: 1px;
+}
+
+.app-copyright {
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+  font-size: 12px;
+  color: rgba(236, 242, 255, 0.8);
+  letter-spacing: 0.4px;
+  pointer-events: auto;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.copyright-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.copyright-link:hover {
+  text-decoration: underline;
 }
 </style>

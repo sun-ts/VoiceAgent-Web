@@ -1,0 +1,33 @@
+:root {
+  --tech-bg-a: #05172d;
+  --tech-bg-b: #0f3b62;
+  --tech-bg-c: #173f6f;
+  --tech-surface: rgba(255, 255, 255, 0.88);
+  --tech-surface-strong: rgba(255, 255, 255, 0.94);
+  --tech-border: rgba(255, 255, 255, 0.36);
+  --tech-border-strong: rgba(20, 33, 61, 0.16);
+  --tech-text-main: #14213d;
+  --tech-text-sub: #48617a;
+  --tech-text-soft: #6d8196;
+  --tech-accent-cyan: #11d9ff;
+  --tech-accent-blue: #2d7fff;
+  --tech-accent-orange: #ff8a3d;
+  --tech-accent-red: #ff4d6d;
+  --tech-success: #1cc7a5;
+  --tech-shadow-card: 0 14px 34px rgba(5, 23, 45, 0.2);
+  --tech-shadow-float: 0 10px 22px rgba(20, 33, 61, 0.16);
+  --tech-shadow-focus: 0 0 0 3px rgba(17, 217, 255, 0.2);
+  --tech-radius-sm: 10px;
+  --tech-radius-md: 16px;
+  --tech-radius-lg: 22px;
+  --tech-radius-pill: 999px;
+  --tech-duration-fast: 160ms;
+  --tech-duration-normal: 260ms;
+  --tech-duration-slow: 520ms;
+  --tech-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tech-font-family: "DIN Alternate", "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --tech-body-bg:
+    radial-gradient(circle at 10% 8%, rgba(17, 217, 255, 0.2), transparent 30%),
+    radial-gradient(circle at 92% 8%, rgba(255, 138, 61, 0.18), transparent 30%),
+    linear-gradient(145deg, var(--tech-bg-a), var(--tech-bg-b));
+}
