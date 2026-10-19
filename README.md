@@ -4,7 +4,7 @@ This template should help get you started developing with Vue 3 in Vite. The tem
 
 Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
 
-[项目在线体验地址](https://121.41.165.69:8443/).
+[项目在线体验地址](https://121.43.111.173:8443/).
 
 Use [vad-web](https://github.com/ricky0123/vad) Support for @ricky0123.
 
