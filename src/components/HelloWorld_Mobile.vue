@@ -21,7 +21,7 @@
           <div class="header-actions">
             <el-button
               @click="toggleVAD"
-              :disabled="loading || !vad || initError"
+              :disabled="loading || starting || !vad || initError"
               :type="listening ? 'danger' : 'success'"
               class="toggle-button"
               :aria-label="loading ? '语音引擎准备中…' : listening ? '停止语音检测' : '开始语音检测'"
@@ -46,19 +46,17 @@
           </div>
         </div>
 
-        <div class="config-section">
-          <el-form :model="formConfig" label-position="left" label-width="auto">
-            <el-form-item label="AI回答：" prop="enableAI" class="form-item-inline">
-              <el-switch
-                v-model="switchValue"
-                inline-prompt
-                active-text="开启"
-                inactive-text="关闭"
-                aria-label="启用大模型问答及语音播报"
-              />
+        <InterruptionControls v-model="interruptionSettings" :locked="listening || starting" />
+        <VolumeFilterControls v-model="volumeFilterSettings" :locked="listening || starting" />
+        <SettingsCard title="大模型配置">
+          <el-form label-position="left" label-width="auto" size="small" class="settings-inline">
+            <el-form-item>
+              <template #label><SettingHelp label="AI回答" help="开启后，将识别的问题发送给大模型并播报回答。关闭后只进行语音识别，不生成新的回答。手机端使用配置文件中的模型参数。" /></template>
+              <el-switch v-model="switchValue" inline-prompt active-text="开启" inactive-text="关闭"
+                aria-label="启用大模型问答及语音播报" />
             </el-form-item>
           </el-form>
-        </div>
+        </SettingsCard>
       </div>
     </div>
 
@@ -101,12 +99,19 @@
 <script setup lang="ts">
 import { getCurrentInstance, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { createVoiceDetector } from '../utils/Services/VoiceRuntime.js'
+import InterruptionControls from './InterruptionControls.vue';
+import SettingsCard from './SettingsCard.vue';
+import SettingHelp from './SettingHelp.vue';
+import VolumeFilterControls from './VolumeFilterControls.vue';
+import { DEFAULT_VOLUME_FILTER_SETTINGS } from '../utils/Services/VolumeFilterSettings.js';
+import { DEFAULT_INTERRUPTION_SETTINGS } from '../utils/Services/InterruptionSettings.js';
 import { NOISY_VAD_PARAMETERS, toVoiceServiceParams } from '../utils/Services/VadEnvironments.js'
 
 import VoiceText from '../utils/Entitys/VoiceText.js'
 import IatResult from '../utils/Entitys/IatResult.js'
 import AudioSound from '../utils/Entitys/AudioSound.js'
 import VoiceService from '../utils/Services/VoiceService.js'
+import { voiceLog } from '../utils/Services/VoiceDiagnostics.js'
 import AiAgentService from '../utils/Services/AiAgentService.js'
 import AudioService from '../utils/Services/AudioService.js'
 
@@ -125,6 +130,7 @@ const breakUUID = ref('');
 const breakModelUUIDList = ref<string[]>([]);
 const breakSoundUUIDList = ref<string[]>([]);
 const listening = ref(false)
+const starting = ref(false)
 const loading = ref(true)
 const initError = ref(false)
 const initialization = new AbortController();
@@ -135,10 +141,9 @@ const voiceTexts = ref<VoiceText[]>([])
 const indicatorColor = ref('#cccccc')
 
 const switchValue = ref(true)
+const interruptionSettings = ref({ ...DEFAULT_INTERRUPTION_SETTINGS });
+const volumeFilterSettings = ref({ ...DEFAULT_VOLUME_FILTER_SETTINGS });
 const selectedValue = ref('英语:')
-const formConfig = ref({
-  enableAI: true
-})
 const modelThinkingUUIDList = ref<string[]>([])
 
 const formatMessageContent = (content:string) => {
@@ -214,8 +219,8 @@ const micStreamPending = ref<Promise<MediaStream> | null>(null);
 
 const startTime = ref<number>(0);
 
-const vadDebugLog = (...args:any[]) => {
-  console.log('[VAD mic]', ...args);
+const vadDebugLog = (reason: string) => {
+  voiceLog('capture.microphone', { reason }, 'debug');
 };
 
 const isLiveStream = (stream: MediaStream | null | undefined): stream is MediaStream => {
@@ -300,27 +305,32 @@ const toggleHeader = () => {
 
 // 切换检测状态
 const toggleVAD = async () => {
-  if (loading.value || !vad.value || initError.value) return;
+  if (loading.value || starting.value || !vad.value || initError.value) return;
   if (listening.value) {
     await vad.value.pause()
+    voiceService.value?.reset();
     closeVoicePlayThread();
     listening.value = false
     statusText.value = '已停止'
     indicatorColor.value = '#cccccc'
     modelThinkingUUIDList.value = [];
   } else {
+    starting.value = true;
     try {
+      voiceService.value.speaker.configureInterruption(interruptionSettings.value);
+      voiceService.value.configureVolumeFilter(volumeFilterSettings.value);
       await vad.value.start();
     } catch (err) {
       initError.value = true;
       statusText.value = '语音启动失败，请检查麦克风权限后重新加载';
-      console.error('VAD启动错误:', err);
+      voiceLog('vad.start_failed', { errorType: err?.name }, 'error');
       return;
+    } finally {
+      starting.value = false;
     }
     if (initialization.signal.aborted) return;
     VoicePlayThread();
     listening.value = true;
-    voiceService.value.resetDecibel();
     statusText.value = '正在检测...';
     
     ///开场白展示及播报
@@ -330,6 +340,7 @@ const toggleVAD = async () => {
           dayjs().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
           openUUID, '', 0);
       voiceText.addVoiceAnswer(instance.appContext.config.globalProperties.$openingRemarks,false);
+      voiceService.value.speaker.beginOpening();
       audioService.value.AddSendContentToAudio(openUUID, voiceText.answerText, false);
       voiceTexts.value.push(voiceText);
     }
@@ -348,8 +359,12 @@ const initVAD = async () => {
       audioContext.value = new (window.AudioContext || (window as any).webkitAudioContext)();
 
     voiceService.value = new VoiceService(...toVoiceServiceParams(NOISY_VAD_PARAMETERS),
-      instance, showVociceText, breakAnswer, inputVolume);
-    audioService.value = new AudioService(textToTTSCallBack, soundEncode.value);
+      instance, showVociceText, null, inputVolume, {
+        isReplyActive: () => playSoundStatus.value || Boolean(audioObj.value) || audioSounds.value.length > 0 ||
+          modelThinkingUUIDList.value.length > 0 || audioService.value?.audioTexts.length > 0 ||
+          audioService.value?.webSockets.length > 0,
+      });
+    audioService.value = new AudioService(textToTTSCallBack, soundEncode.value, textToTTSFailure);
     
     // 创建VAD实例
     vad.value = await createVoiceDetector({
@@ -385,6 +400,7 @@ const initVAD = async () => {
       processorType : 'auto',
       // 帧处理回调 - 实时更新状态
       onFrameProcessed: (probs, frame) => {
+        if (initialization.signal.aborted) return;
         if(loading.value) return;
         //16000每帧32ms音频
         voiceService.value.voiceTranslate(probs, frame);
@@ -402,7 +418,7 @@ const initVAD = async () => {
     loading.value = false
     initError.value = true;
     statusText.value = '语音引擎加载失败，请检查网络后重新加载';
-    console.error('VAD初始化错误:', err)
+    voiceLog('vad.init_failed', { errorType: err?.name }, 'error');
   }
 }
 
@@ -410,6 +426,7 @@ const initVAD = async () => {
  * 展示翻译内容
  */
 const showVociceText = async (uuid:string,data:string) => {
+  if (!voiceService.value.speaker.has(uuid)) return;
   let index = voiceTexts.value.findIndex(voiceText => voiceText.isMine(uuid));
   
   if(index < 0) {
@@ -423,7 +440,7 @@ const showVociceText = async (uuid:string,data:string) => {
   // console.log('返回数据:'+data)
   const res = JSON.parse(data)
   if (res.code != 0) {
-    console.log(`error code ${res.code}, reason ${res.message}`)
+    voiceLog('asr.failed', { utteranceId: uuid, code: res.code }, 'error');
     voiceTexts.value[index].voiceText = '翻译出错错误编码：' + res.code + ',错误信息：' + res.message;
     closeWebSocket(voiceService.value,uuid);
     return;
@@ -459,41 +476,28 @@ const showVociceText = async (uuid:string,data:string) => {
     voiceTexts.value[index].voiceText = str;
     // if(switchValue.value)
     //   voiceTexts.value[index].targetLang = selectedValue.value;
-    if (isContinue.value) {
-      if (!breakFlag.value && breakUUID.value && breakUUID.value == uuid){
-        let rexg = /([,，.。!！?？;；:：]+)/g,
-          noSplitWorld = str.trim().replace(rexg,'');
-        if (noSplitWorld.length > 5) {
-          breakFlag.value = true;
-          breakSuccess(uuid);
-        }
-      }
+    if (voiceService.value.speaker.authorizeText(uuid, str)) {
+      breakUUID.value = uuid;
+      breakFlag.value = true;
+      await breakSuccess(uuid);
     }
   } else {
     voiceTexts.value.splice(index,1);
   }
 
   // res.data.status ==2 说明数据全部返回完毕，可以关闭连接，释放资源
-  if (res.data.status == 2) { 
+  if (res.data.status == 2) {
+    voiceLog('asr.final', { utteranceId: uuid, characters: (str.match(/[\p{L}\p{N}]/gu) || []).length });
     closeWebSocket(voiceService.value,uuid);
     iatResults.value.splice(indexIatResult,1);
 
-    if(switchValue.value && str && str.trim()) {
-      if(isContinue.value && !breakFlag.value) {
-        //不需要调用翻译和转译
-      } else {
-        translateToOtherLanguage(uuid);
-      }
+    if (switchValue.value && str && str.trim() && voiceService.value.speaker.shouldAnswer(uuid)) {
+      translateToOtherLanguage(uuid);
     }
-
-    if (breakUUID.value && breakUUID.value == uuid){
-      if(breakFlag.value) {
-        breakSuccess(uuid).then(() => {
-          breakUUID.value = '';});
-        isContinue.value = false;
-      } else {
-        breakUUID.value = '';
-      }
+    voiceService.value.speaker.finish(uuid);
+    if (breakUUID.value === uuid) {
+      breakUUID.value = '';
+      breakFlag.value = false;
     }
   }
 }
@@ -502,6 +506,7 @@ const showVociceText = async (uuid:string,data:string) => {
  * 调用大模型进行文本翻译
  */
 const translateToOtherLanguage = async (uuid) => {
+  voiceService.value.speaker.activateQuestion(uuid);
   const system = instance.appContext.config.globalProperties.$llmPrompt;
   const aiAgent = new AiAgentService(uuid);
   aiAgents.value.push(aiAgent);
@@ -530,10 +535,10 @@ const translateToOtherLanguage = async (uuid) => {
         beContext:beContext
       }).catch((err) => {
         clearModelThinking(uuid);
-        console.error('大模型请求失败:', err);
+        voiceLog('llm.failed', { utteranceId: uuid, errorType: err?.name }, 'error');
       });
   } else {
-    console.error("-".repeat(10) + "语音翻译查找待识别文本时失败！" + "-".repeat(10));
+    voiceLog('llm.record_missing', { utteranceId: uuid }, 'error');
   }
 }
 
@@ -548,11 +553,7 @@ const translateCallBack = async (uuid, content, isAnswer) => {
 
   let indexBreak = breakModelUUIDList.value.findIndex(item => item == uuid);
   if(indexBreak > -1) {
-    if(!isAnswer) {
-      breakModelUUIDList.value.splice(indexBreak,1);
-    } else {
-      return;
-    }
+    return;
   } else if (breakUUID.value && breakFlag.value && breakUUID.value != uuid) {
     breakModelUUIDList.value.push(uuid);
     isAnswer = false;
@@ -563,9 +564,20 @@ const translateCallBack = async (uuid, content, isAnswer) => {
     audioService.value.AddSendContentToAudio(uuid, content, isAnswer);
     voiceTexts.value[index].addVoiceAnswer(content, isAnswer);
   } else {
-    console.error("-".repeat(10) + "语音翻译查找待识别文本时失败！" + "-".repeat(10));
+    voiceLog('llm.record_missing', { utteranceId: uuid }, 'error');
   }
 }
+
+// Keep a lightweight failed-segment marker so ordered playback can advance.
+const textToTTSFailure = (uuid, reason) => {
+  if (breakSoundUUIDList.value.includes(uuid.substring(0, 36))) return;
+  const index = audioSounds.value.findIndex(sound => sound.isMine(uuid));
+  const failed = new AudioSound(uuid, audioContext.value, { encoding: soundEncode.value });
+  failed.failed = true;
+  if (index >= 0) audioSounds.value.splice(index, 1, failed);
+  else audioSounds.value.push(failed);
+  voiceLog('playback.segment_discard', { utteranceId: uuid, stage: 'TTS', reason }, 'warn');
+};
 
 /**
  * 文本转语音的回调函数
@@ -573,7 +585,7 @@ const translateCallBack = async (uuid, content, isAnswer) => {
 const textToTTSCallBack = async (uuid, data) => {
   const res = JSON.parse(data);
   if (res.code != 0) {
-    console.error(`${res.code}: ${res.message}`);
+    voiceLog('tts.failed', { utteranceId: uuid, code: res.code }, 'error');
     closeWebSocket(audioService.value,uuid);
     return;
   }
@@ -581,11 +593,8 @@ const textToTTSCallBack = async (uuid, data) => {
   let uuidOrg = uuid.substring(0,36);
   let indexBreak = breakSoundUUIDList.value.findIndex(item => item == uuidOrg);
   if(indexBreak > -1) {
-    if(res.data.status == 2) {
-      breakSoundUUIDList.value.splice(indexBreak,1);
-    } else {
-      return;
-    }
+    closeWebSocket(audioService.value,uuid);
+    return;
   } else if (breakUUID.value && breakFlag.value && breakUUID.value != uuidOrg) {
     breakSoundUUIDList.value.push(uuidOrg);
     closeWebSocket(audioService.value,uuid);
@@ -617,7 +626,7 @@ const textToTTSCallBack = async (uuid, data) => {
  */
 const VoicePlayThread = () => {
   playClock.value = setInterval(() => {
-    if(playSoundStatus.value) return;
+    if(playSoundStatus.value || audioObj.value) return;
 
     if(breakUUID.value) return;
 
@@ -656,6 +665,8 @@ const pcmPlayer = () => {
     audioBufferSource.value.buffer = playPauseSound.value.SoundAll;
     audioBufferSource.value.connect(audioContext.value.destination);
     audioBufferSource.value.start(0);
+    const playingId = playPauseSound.value.uuidOrg;
+    voiceLog('playback.start', { utteranceId: playingId, stage: 'PCM' });
     playPause.value = 0;
     isContinue.value = false;
     playSoundStatus.value = true;
@@ -663,6 +674,7 @@ const pcmPlayer = () => {
 
     // 播放结束后释放临时 URL（优化性能）
     audioBufferSource.value.onended = () => {
+      voiceLog('playback.end', { utteranceId: playingId, stage: 'PCM' });
       //console.log('-'.repeat(10) + audioContext.value.state + '-'.repeat(10))
       if(audioBufferSource.value)
         audioBufferSource.value.disconnect();
@@ -670,7 +682,7 @@ const pcmPlayer = () => {
       playSoundStatus.value = false;
     };
   } catch (err) {
-    console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
+    voiceLog('playback.failed', { errorType: err?.name }, 'error');
     if(audioBufferSource.value)
       audioBufferSource.value.disconnect();
     audioBufferSource.value = null;
@@ -692,6 +704,15 @@ const mp3Player = () => {
         if(playPauseSound.value.SoundAll instanceof Blob) {
           audioUrl.value = (webkitURL||window.URL).createObjectURL(playPauseSound.value.SoundAll)
           audioObj.value = new Audio(audioUrl.value);
+          const loadingAudio = audioObj.value;
+          const loadingUrl = audioUrl.value;
+          loadingAudio.onerror = () => {
+            if (audioObj.value !== loadingAudio) return;
+            audioObj.value = null;
+            URL.revokeObjectURL(loadingUrl);
+            audioUrl.value = null;
+            playSoundStatus.value = false;
+          };
 
           // 微信浏览器兼容性处理
           let audioLoaded = false;
@@ -708,6 +729,7 @@ const mp3Player = () => {
           };
 
           const attemptPlay = () => {
+            if (audioObj.value !== loadingAudio) return;
             if (audioLoaded && canPlayTriggered && !playSoundStatus.value) {
               // 移除事件监听器避免重复触发
               audioObj.value.removeEventListener('loadeddata', onLoaded);
@@ -715,7 +737,7 @@ const mp3Player = () => {
 
               // 微信浏览器可能需要微小延迟
               setTimeout(() => {
-                mp3Play();
+                if (audioObj.value === loadingAudio) mp3Play();
               }, 50);
             }
           };
@@ -728,7 +750,7 @@ const mp3Player = () => {
           audioObj.value.preload = 'auto';
           audioObj.value.load();
         } else {
-          console.log('-'.repeat(10) + '音频数据格式错误，非Blob格式!' + '-'.repeat(10));
+          voiceLog('playback.invalid_audio', { reason: 'not_blob' }, 'error');
         }
       } else {
         return;
@@ -736,14 +758,14 @@ const mp3Player = () => {
     } else {
       isContinue.value = false;
       if (!audioObj.value) {
-        console.log('-'.repeat(10) + '续播失败!' + '-'.repeat(10));
+        voiceLog('playback.resume_failed', { reason: 'missing_audio_element' }, 'warn');
         return;
       }
       playSoundStatus.value = true;
       mp3Play();
     }
   } catch(err) {
-    console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
+    voiceLog('playback.failed', { errorType: err?.name }, 'error');
     audioObj.value = null;
     (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
     audioUrl.value = null;
@@ -758,38 +780,52 @@ const mp3Player = () => {
  * 解决微信浏览器下第一次播放失败的问题
  */
 const mp3Play = () => {
-  if (!audioObj.value) return;
+  const playingAudio = audioObj.value;
+  const playingUrl = audioUrl.value;
+  const playingId = playPauseSound.value.uuidOrg;
+  if (!playingAudio) return;
 
-  audioObj.value.onended = () => {
+  const releasePlayingAudio = () => {
+    if (audioObj.value !== playingAudio) return;
     audioObj.value = null;
-    (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
+    (webkitURL||window.URL).revokeObjectURL(playingUrl);
     audioUrl.value = null;
     playSoundStatus.value = false;
   };
 
-  const playAudio = () => {
-    if (!audioObj.value) return;
+  playingAudio.onended = () => {
+    if (audioObj.value === playingAudio) voiceLog('playback.end', { utteranceId: playingId, stage: 'MP3' });
+    releasePlayingAudio();
+  };
+  playingAudio.onerror = releasePlayingAudio;
 
-    const playPromise = audioObj.value.play();
+  const playAudio = () => {
+    if (audioObj.value !== playingAudio) return;
+
+    const playPromise = playingAudio.play();
 
     if (playPromise !== undefined) {
-      playPromise.catch((error: any) => {
-        console.error('-'.repeat(10) + '播放失败，尝试重试：' + '-'.repeat(10), error);
+      playPromise.then(() => {
+        if (audioObj.value === playingAudio) voiceLog('playback.start', { utteranceId: playingId, stage: 'MP3' });
+      }).catch((error: any) => {
+        if (audioObj.value !== playingAudio) return;
+        voiceLog('playback.retry', { errorType: error?.name }, 'warn');
 
         // 微信浏览器常见错误：播放被阻止，尝试重新加载
         if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
           // 延迟后重试
           setTimeout(() => {
-            if (audioObj.value) {
-              audioObj.value.load();
-              audioObj.value.play().catch((retryError: any) => {
-                console.error('-'.repeat(10) + '重试播放失败：' + '-'.repeat(10), retryError);
-                playSoundStatus.value = false;
+            if (audioObj.value === playingAudio) {
+              playingAudio.load();
+              playingAudio.play().catch((retryError: any) => {
+                if (audioObj.value !== playingAudio) return;
+                voiceLog('playback.retry_failed', { errorType: retryError?.name }, 'error');
+                releasePlayingAudio();
               });
             }
           }, 100);
         } else {
-          playSoundStatus.value = false;
+          releasePlayingAudio();
         }
       });
     }
@@ -812,7 +848,8 @@ const mp3Play = () => {
   } else {
     // 等待音频加载完成
     const onCanPlay = () => {
-      audioObj.value.removeEventListener('canplay', onCanPlay);
+      playingAudio.removeEventListener('canplay', onCanPlay);
+      if (audioObj.value !== playingAudio) return;
       setTimeout(playAudio, 50); // 微信浏览器可能需要微小延迟
     };
     audioObj.value.addEventListener('canplay', onCanPlay);
@@ -823,20 +860,19 @@ const mp3Play = () => {
  * 获取应该播放的
  */
 const GetVoicePlay = ():AudioSound => {
-  if(audioSounds.value.length < 1)
-    return null;
-  let indexAudioSound = -1;
-  if(play_UUID.value === '') {
-    indexAudioSound = audioSounds.value.findIndex(audioSound => audioSound.uuidNum == 1);
-  } else {
-    indexAudioSound = audioSounds.value.findIndex(
-      audioSound => audioSound.uuidOrg == play_UUID.value && 
-        audioSound.uuidNum == play_Num.value + 1);
-  }
-  if(indexAudioSound > -1) {
-    if(audioSounds.value[indexAudioSound].SoundAll) {
-      return audioSounds.value.splice(indexAudioSound,1)[0];
+  while (audioSounds.value.length > 0) {
+    const index = audioSounds.value.findIndex(sound => play_UUID.value === ''
+      ? sound.uuidNum === 1
+      : sound.uuidOrg === play_UUID.value && sound.uuidNum === play_Num.value + 1);
+    if (index < 0) return null;
+    const sound = audioSounds.value[index];
+    if (sound.failed) {
+      audioSounds.value.splice(index, 1);
+      play_UUID.value = sound.uuidFlag === 'true' ? '' : sound.uuidOrg;
+      play_Num.value = sound.uuidFlag === 'true' ? 0 : sound.uuidNum;
+      continue;
     }
+    return sound.SoundAll ? audioSounds.value.splice(index, 1)[0] : null;
   }
   return null;
 }
@@ -845,6 +881,10 @@ const GetVoicePlay = ():AudioSound => {
  * 声音停止播放方法
  */
 const closeVoicePlayThread = () => {
+  // Also retire pending model/TTS work so restart cannot resurrect an old reply.
+  void breakSuccess('');
+  breakUUID.value = '';
+  breakFlag.value = false;
   if (playClock.value) {
     clearInterval(playClock.value);
   }
@@ -871,35 +911,40 @@ const closeVoicePlayThread = () => {
 }
 
 /**
- * 打断播报
- */
-const breakAnswer = async (uuid) => {
-  if(breakUUID.value != uuid)
-    breakUUID.value = uuid;
-  else
-    return;
-  if (playSoundStatus.value) {
-    isContinue.value = true;
-  }
-  if (soundEncode.value == 'MP3') {
-    if(audioObj.value) {
-      audioObj.value.pause();
-    }
-    playSoundStatus.value = false;
-  }
-}
-
-/**
  * 成功打断
  */
 const breakSuccess = async (uuid) => {
+  voiceLog('playback.stop', { utteranceId: uuid, reason: uuid ? 'new_question' : 'capture_stopped' });
+  // Stop only after speaker and text authorization. Candidate audio never pauses playback.
+  const oldIds = new Set<string>([
+    ...aiAgents.value.filter(agent => !agent.isMine(uuid)).map(agent => agent.uuid),
+    ...audioSounds.value.map(sound => sound.uuidOrg),
+    playPauseSound.value?.uuidOrg,
+    ...(audioService.value?.audioTexts || []).map(text => text.uuid),
+    ...(audioService.value?.webSockets || []).map(socket => socket.websocketid.substring(0, 36)),
+  ].filter(id => id && id !== uuid));
+  for (const id of oldIds) {
+    if (!breakModelUUIDList.value.includes(id)) breakModelUUIDList.value.push(id);
+    if (!breakSoundUUIDList.value.includes(id)) breakSoundUUIDList.value.push(id);
+    audioService.value?.cancel(id);
+  }
+  if (audioBufferSource.value) {
+    const source = audioBufferSource.value;
+    audioBufferSource.value = null;
+    source.onended = null;
+    source.stop();
+    source.disconnect();
+  }
+  playSoundStatus.value = false;
+  isContinue.value = false;
   if (soundEncode.value == 'MP3') {
     if(audioObj.value) {
-      audioObj.value.currentTime = 0;
-      // 可选：重置播放状态，避免异常
-      audioObj.value.src = '';
-      audioObj.value.load(); 
+      const stoppedAudio = audioObj.value;
       audioObj.value = null;
+      stoppedAudio.onended = null;
+      stoppedAudio.currentTime = 0;
+      stoppedAudio.src = '';
+      stoppedAudio.load();
       URL.revokeObjectURL(audioUrl.value);
       audioUrl.value = null;
     }
@@ -976,6 +1021,8 @@ watch(
 // 组件卸载时清理
 onUnmounted(async () => {
   initialization.abort();
+  voiceService.value?.reset();
+  closeVoicePlayThread();
   try {
     await vad.value?.destroy();
   } finally {

@@ -42,7 +42,7 @@ async function openPage(mobile = false) {
     const response = await route.fetch();
     await route.fulfill({ response, body: `${await response.text()}
       VoiceService.prototype.sendAudioData = async function(uuid, audio, status) {
-        window.__sentAudio.push({ status, parameters: [this.positiveSpeechThreshold,
+        window.__sentAudio.push({ status, volume: this.volumeFilter, parameters: [this.positiveSpeechThreshold,
           this.negativeSpeechThreshold, this.preSpeechPadFrame, this.redemptionFrame, this.cacheSpeechMs] });
       };
     ` });
@@ -103,5 +103,75 @@ test('mobile defaults to noisy settings and rejects lower-confidence frames', as
     await page.evaluate(() => window.__emitFrames(0.9, 1));
     assert.deepEqual(await page.evaluate(() => window.__sentAudio[0].parameters), [0.7, 0.5, 10, 32, 400]);
     await page.getByRole('button', { name: '停止语音检测', exact: true }).click();
+  } finally { await context.close(); }
+});
+
+test('volume filtering uses an initial reference, a configurable lower bound, reset, and playback bypass', async () => {
+  const { page, context } = await openPage();
+  try {
+    const result = await page.evaluate(async () => {
+      const { default: VoiceService } = await import('/src/utils/Services/VoiceService.js');
+      let active = false, id = 0;
+      const service = new VoiceService(.7, .5, 1, 2, 0,
+        { appContext: { config: { globalProperties: { $uuid: () => String(++id) } } } },
+        () => {}, null, null, { isReplyActive: () => active });
+      service.speaker.configureInterruption({ enabled: true, requireSameSpeaker: false });
+      const sent = [];
+      service.sendAudioData = (id, pcm, status) => sent.push(status);
+      service.configureVolumeFilter({ enabled: true, lowerDb: 4 });
+      const speak = amplitude => {
+        sent.length = 0;
+        service.voiceTranslate({ isSpeech: .95 }, new Float32Array(512).fill(amplitude));
+        service.voiceTranslate({ isSpeech: 0 }, new Float32Array(512));
+        service.voiceTranslate({ isSpeech: 0 }, new Float32Array(512));
+        return sent.includes(0);
+      };
+      const accepted = [.1, .05, .4, .08, .2].map(speak);
+      active = true;
+      const playbackQuiet = speak(.001);
+      active = false;
+      service.reset();
+      const afterReset = speak(.01);
+      service.configureVolumeFilter({ enabled: true, lowerDb: 0 });
+      const zeroBound = [.1, .09, .1, .2].map(speak);
+      service.configureVolumeFilter({ enabled: false, lowerDb: 0 });
+      const disabled = [.001, .8].map(speak);
+      // VAD remains authoritative even when volume filtering is off.
+      sent.length = 0;
+      service.voiceTranslate({ isSpeech: .1 }, new Float32Array(512).fill(.8));
+      return { accepted, playbackQuiet, afterReset, disabled, zeroBound, nonSpeechSent: sent.length };
+    });
+    assert.deepEqual(result, { accepted: [true, false, true, true, true], playbackQuiet: true,
+      afterReset: true, disabled: [true, true], zeroBound: [true, false, true, true], nonSpeechSent: 0 });
+  } finally { await context.close(); }
+});
+
+for (const mobile of [false, true]) test(`${mobile ? 'mobile' : 'desktop'} setting help is available without inline explanations`, async () => {
+  const { page, context } = await openPage(mobile);
+  try {
+    const help = page.getByRole('button', { name: '播报打断说明', exact: true });
+    if (mobile) await help.click(); else await help.hover();
+    await page.getByRole('tooltip').filter({ hasText: '开场白' }).waitFor();
+    await help.press('Escape');
+    await page.getByRole('tooltip').filter({ hasText: '开场白' }).waitFor({ state: 'hidden' });
+    if (!mobile) {
+      await help.blur(); await page.mouse.move(1000, 800); await help.focus();
+      await page.getByRole('tooltip').filter({ hasText: '开场白' }).waitFor();
+      await help.press('Escape');
+      await page.getByRole('tooltip').filter({ hasText: '开场白' }).waitFor({ state: 'hidden' });
+    }
+    const volume = page.getByRole('group', { name: '音量筛选', exact: true });
+    const enable = volume.getByRole('switch', { name: '启用初始音量筛选', exact: true });
+    const lower = volume.getByRole('spinbutton', { name: '允许降低 (dB)', exact: true });
+    await lower.fill('6'); await lower.press('Tab');
+    await page.getByRole('button', { name: mobile ? '开始语音检测' : '开始检测', exact: true }).click();
+    assert.equal(await enable.isDisabled(), true);
+    assert.equal(await lower.isDisabled(), true);
+    await page.evaluate(() => window.__emitFrames(.95, 10));
+    assert.deepEqual(await page.evaluate(() => window.__sentAudio[0].volume), { enabled: true, lowerDb: 6 });
+    await page.getByRole('button', { name: mobile ? '停止语音检测' : '停止检测', exact: true }).click();
+    await enable.locator('..').click();
+    assert.equal(await lower.isDisabled(), true);
+    assert.equal(await enable.isDisabled(), false);
   } finally { await context.close(); }
 });

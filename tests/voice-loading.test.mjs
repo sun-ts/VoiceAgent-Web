@@ -200,7 +200,34 @@ test('a slow WASM download does not leave an unused ONNX preload or fetch the mo
   } finally { release(); await context.close(); }
 });
 
-test('development dependency optimization shares the model download with app source', async () => {
+async function captureVadLogs(page, modules) {
+  await page.addInitScript(modules => {
+    localStorage.setItem('voice-log-modules', modules);
+    localStorage.setItem('voice-log-level', 'debug');
+    window.__vadLogs = [];
+    const debug = console.debug.bind(console);
+    console.debug = (...args) => {
+      if (args[0] === '[voice]' && args[1]?.event === 'vad.runtime') window.__vadLogs.push(args[1]);
+      debug(...args);
+    };
+  }, modules);
+}
+
+for (const modules of ['vad', 'off']) test(`production VAD library obeys module selection ${modules}`, async () => {
+  const { page, context, errors } = await openPage();
+  const rawLogs = [];
+  page.on('console', message => { if (message.text().startsWith('VAD |')) rawLogs.push(message.text()); });
+  try {
+    await captureVadLogs(page, modules);
+    await page.goto(origin);
+    await page.getByText('语音引擎已就绪', { exact: true }).first().waitFor({ timeout: 30000 });
+    assert.equal(await page.evaluate(() => window.__vadLogs.length > 0), modules === 'vad');
+    assert.deepEqual(rawLogs, [], 'vad-web internal logger must use the shared switches');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('development dependency optimization shares the model download and VAD logger with app source', async () => {
   const dev = await createServer({
     logLevel: 'warn',
     server: { host: '127.0.0.1', port: 0, open: false },
@@ -209,6 +236,7 @@ test('development dependency optimization shares the model download with app sou
   const { page, context, errors } = await openPage();
   let modelRequests = 0;
   try {
+    await captureVadLogs(page, 'vad');
     await dev.listen();
     await page.route(`**${modelPath}`, route => {
       modelRequests++;
@@ -217,6 +245,7 @@ test('development dependency optimization shares the model download with app sou
     await page.goto(dev.resolvedUrls.local[0]);
     await page.getByText('语音引擎已就绪', { exact: true }).first().waitFor({ timeout: 30000 });
     assert.equal(modelRequests, 1);
+    assert.equal(await page.evaluate(() => window.__vadLogs.some(log => log.module === 'vad')), true);
     assert.deepEqual(errors, []);
   } finally { await context.close(); await dev.close(); }
 });

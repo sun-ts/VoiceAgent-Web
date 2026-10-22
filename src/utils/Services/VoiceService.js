@@ -1,9 +1,16 @@
-import WebSocketSendEntity from '../Entitys/WebSocketSendEntity.js'
 import WebSocketSendTool from '../WebSocket/WebSocketSendTool.js'
 import XfWebSocketTool from '../WebSocket/XfWebSocketTool.js';
+import SpeakerClient from './SpeakerClient.js';
+import SpeakerSession from './SpeakerSession.js';
+import { voiceLog } from './VoiceDiagnostics.js';
+import { DEFAULT_VOLUME_FILTER_SETTINGS, normalizeVolumeFilterSettings } from './VolumeFilterSettings.js';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+
+// During playback, a quiet onset can precede VAD's speech threshold by several
+// words. Keep this audio for ASR; SpeakerSession excludes it from verification.
+const INTERRUPTION_PRE_ROLL_MS = 1500;
 
 class VoiceService {
     /**
@@ -15,7 +22,7 @@ class VoiceService {
      * instance 公共属性及参数
      */
     constructor(positiveSpeechThreshold,negativeSpeechThreshold,
-        preSpeechPadFrame,redemptionFrame,cacheSpeechMs,instance,callBack,breakFunction,inputVolume) {
+        preSpeechPadFrame,redemptionFrame,cacheSpeechMs,instance,callBack,breakFunction,inputVolume, speakerOptions = {}) {
         /// 人声检测阀值 0.5
         this.positiveSpeechThreshold = positiveSpeechThreshold;
         /// 静音检测阀值 0.3
@@ -29,7 +36,8 @@ class VoiceService {
         /// 公共属性及参数
         this.instance = instance;
         /// 初始人声分贝值
-        this.currentDecibel = 0;
+        this.currentDecibel = null;
+        this.volumeFilter = { ...DEFAULT_VOLUME_FILTER_SETTINGS };
         /// 人声开始标识
         this.isTrigger = false;
         /// 人声开始计数
@@ -43,7 +51,6 @@ class VoiceService {
         /// 缓存待发送数据堆栈
         this.linkedList = [];
 
-        this.sendAudioList = [];
 
         this.webSockets = [];
         /// 识别队列ID
@@ -54,6 +61,14 @@ class VoiceService {
         this.breakFunction = breakFunction;
 
         this.inputVolume = inputVolume;
+        this.frameSpeech = new WeakMap();
+        this.vadFrameCounts = { speechFrames: 0, nonSpeechFrames: 0 };
+        this.speaker = new SpeakerSession({
+            client: new SpeakerClient(),
+            isReplyActive: speakerOptions.isReplyActive || (() => false),
+            send: (uuid, audio, status) => this.sendAudioData(uuid, audio, status),
+            onError: speakerOptions.onError || (error => voiceLog('speaker.unavailable', { errorType: error?.name }, 'warn')),
+        });
 
         // 扩展 dayjs 支持时区和UTC
         dayjs.extend(utc);
@@ -81,7 +96,12 @@ class VoiceService {
      * 重置记忆声音分贝
      */
     resetDecibel() {
-        this.currentDecibel = 0;
+        this.currentDecibel = null;
+    }
+
+    configureVolumeFilter(settings) {
+        this.volumeFilter = normalizeVolumeFilterSettings(settings);
+        this.resetDecibel();
     }
 
     /**
@@ -111,6 +131,7 @@ class VoiceService {
             // 根据语音概率更新指示器颜色
             const probability = probs.isSpeech
             const byteArray = this.floatTo16BitByteArray(frame);
+            this.frameSpeech.set(byteArray, probability >= this.negativeSpeechThreshold);
             /// 实时展示声音大小
             this.inputVolume && this.inputVolume(`rgba(0, 255, 0, ${Math.min(probability, 1)})`);
             // if (probability >= this.positiveSpeechThreshold) {
@@ -124,21 +145,12 @@ class VoiceService {
 
             /// 未检测到人声，开始检测
             if (probability >= this.positiveSpeechThreshold && !this.isTrigger) {
-                let newDecibel = this.calculateDecibel(byteArray)
-                //console.log('声音分贝情况currentDecibel：' + this.currentDecibel + ',新声音分贝情况：' + newDecibel)
-                if(this.currentDecibel > 0) {
-                    if(newDecibel >= this.currentDecibel) {
-                        this.isTrigger = true;
-                        this.iStartTime = 0;
-                        this.iEndTime = 0;
-                        this.isSend = false;
-                        this.iSendCount = 0;
-                    } else {
-                        console.log('----当前声音分贝阀值currentDecibel：' + 
-                            this.currentDecibel + ',被过滤的分贝值：' + newDecibel);
-                    }
-                } else {
-                    this.currentDecibel = newDecibel - 15;
+                const newDecibel = this.calculateDecibel(byteArray);
+                if (this.volumeFilter.enabled && this.currentDecibel === null) this.currentDecibel = newDecibel;
+                // Playback capture levels can change: leave interruption to
+                // VAD, speaker verification and the text gate in that case.
+                if (!this.volumeFilter.enabled || this.speaker.isReplyActive() ||
+                    newDecibel >= this.currentDecibel - this.volumeFilter.lowerDb) {
                     this.isTrigger = true;
                     this.iStartTime = 0;
                     this.iEndTime = 0;
@@ -155,8 +167,9 @@ class VoiceService {
                 } else if (probability >= this.negativeSpeechThreshold) { //过渡判定
                     if (this.iStartTime > 0)
                         this.iStartTime++;
-                    if (this.iEndTime > 1)
-                        this.iEndTime++;
+                    // Speech above the ongoing threshold breaks a low-confidence
+                    // run, even if it has not reached the stricter start threshold.
+                    this.iEndTime = 0;
                 } else { //终止判定
                     /// 解决Vad跳针问题
                     if(!this.isSend && this.iEndTime > 1) {
@@ -185,19 +198,18 @@ class VoiceService {
                     const audioByte = this.linkedList.shift();
                     if(this.isTrigger) {
                         if (this.iSendCount > 1) {
-                            this.sendAudioData(this.uuidAsr,audioByte,1);
+                            this.routeAudioData(this.uuidAsr,audioByte,1);
                         } else {
                             if(this.uuidAsr == '') {
                                 this.uuidAsr = this.instance.appContext.config.globalProperties.$uuid();
-                                this.sendAudioData(this.uuidAsr,audioByte,0);
+                                this.routeAudioData(this.uuidAsr,audioByte,0);
                                 //console.error('----------开始发送ASRUUID：' + this.uuidAsr + '---------');
-                                this.breakFunction && this.breakFunction(this.uuidAsr);
                             } else {
-                                console.error('----------出现问题：又重新开始send数据！---------');
+                                voiceLog('asr.duplicate_start', { utteranceId: this.uuidAsr }, 'error');
                             }
                         }
                     } else {
-                        this.sendAudioData(this.uuidAsr,audioByte,2);
+                        this.routeAudioData(this.uuidAsr,audioByte,2);
                         //console.error('----------结束发送ASRUUID：' + this.uuidAsr + '---------');
                         this.uuidAsr = '';
                         this.isSend = false;
@@ -216,7 +228,10 @@ class VoiceService {
             
             /// 缓存前多少毫秒的数据
             if (!this.isTrigger) {
-                while(this.linkedList.length > this.cacheSpeechMs / 32) {
+                const cacheFrames = this.speaker.isReplyActive()
+                    ? Math.ceil(Math.max(this.cacheSpeechMs, INTERRUPTION_PRE_ROLL_MS) / 32)
+                    : this.cacheSpeechMs / 32;
+                while(this.linkedList.length > cacheFrames) {
                     this.linkedList.shift();
                 }
             }
@@ -230,8 +245,36 @@ class VoiceService {
             if(this.linkedList.length > 0) {
                 this.linkedList = [];
             }
-            console.error('检测语音出错:', error)
+            voiceLog('vad.processing_failed', { errorType: error?.name }, 'error');
         }
+    }
+
+    routeAudioData(uuid, audio, status) {
+        const speech = this.frameSpeech.get(audio) === true;
+        if (status === 0) this.vadFrameCounts = { speechFrames: 0, nonSpeechFrames: 0 };
+        this.vadFrameCounts[speech ? 'speechFrames' : 'nonSpeechFrames']++;
+        if (status === 0 || status === 2) voiceLog(status === 0 ? 'vad.start' : 'vad.end', {
+            utteranceId: uuid, chunks: this.iSendCount,
+            durationMs: this.iSendCount * 32,
+            ...this.vadFrameCounts,
+            positiveThreshold: this.positiveSpeechThreshold,
+            negativeThreshold: this.negativeSpeechThreshold,
+            ...(status === 2 ? { reason: 'vad_end_threshold', endWindowMs: this.redemptionFrame * 32 } : {}),
+        });
+        this.speaker.push(uuid, audio, status, speech);
+    }
+
+    reset() {
+        voiceLog('capture.reset');
+        this.speaker.reset();
+        this.webSockets.forEach(socket => socket.close());
+        this.webSockets = [];
+        this.linkedList = [];
+        this.isTrigger = this.isSend = false;
+        this.iStartTime = this.iEndTime = this.iSendCount = 0;
+        this.vadFrameCounts = { speechFrames: 0, nonSpeechFrames: 0 };
+        this.uuidAsr = '';
+        this.resetDecibel();
     }
 
     /**
@@ -311,75 +354,27 @@ class VoiceService {
      * @param {Uint8Array} audioByte 
      * @param {number} status 
      */
-    async sendAudioData(uuid, audioByte, status) {
-        let flag = false, message = '';
-        if(status == 0) {
-            let webSocketSendEntity = new WebSocketSendEntity(uuid);
-            webSocketSendEntity.addReadySendData(audioByte, status);
-            this.sendAudioList.push(webSocketSendEntity);
-            this.OptionAudioDataToAsr(uuid);
-            flag = true;
-        } else {
-            if (this.sendAudioList.length > 0) {
-                let index = this.sendAudioList.
-                    findIndex(webSocketSendEntity => webSocketSendEntity.isMine(uuid));
-                if (index > -1) {
-                    this.sendAudioList[index].WebSocketSendEntitys.push({audioByte:audioByte, status:status});
-                    flag = true;
-                } else {
-                    message = '----------异常问题ID为'+uuid+'的非起始数据，未找到对应的发送队列。----------';
-                }
-            } else {
-                message = '----------异常问题ID为'+uuid+'的非起始数据，队列为空----------';
-            }
+    sendAudioData(uuid, audioByte, status) {
+        let socket = this.webSockets.find(item => item.isMine(uuid));
+        if (status === 0) {
+            if (socket) return;
+            socket = new WebSocketSendTool(uuid, new XfWebSocketTool('ASR'), (id, data) => {
+                if (!this.speaker.has(id)) return;
+                const terminal = socket.closed;
+                Promise.resolve(this.callBack(id, data)).catch(error => {
+                    voiceLog('asr.callback_failed', { utteranceId: id, errorType: error.name }, 'error');
+                }).finally(() => {
+                    if (terminal) this.speaker.finish(id);
+                });
+            }, (id, reason) => {
+                this.webSockets = this.webSockets.filter(item => !item.isMine(id));
+                if (!['server_final', 'server_error'].includes(reason)) this.speaker.finish(id);
+            });
+            this.webSockets.push(socket);
         }
-        if(!flag) console.error(message);
-    }
-
-    /**
-     * 通过事物ID启动ASR翻译
-     * @param {事物ID} uuid 
-     */
-    async OptionAudioDataToAsr(uuid) {
-        if(uuid != '') {
-            let iCount = 0;
-            let webSocket = new WebSocketSendTool(uuid,new XfWebSocketTool("ASR"),this.callBack);
-            this.webSockets.push(webSocket);
-
-            let myClock = setInterval(() => {
-                iCount++;
-                let index = this.sendAudioList.
-                    findIndex(webSocketSendEntity => webSocketSendEntity.isMine(uuid));
-                if(index > -1) {
-                    while(this.sendAudioList[index].WebSocketSendEntitys.length > 0) {
-                        let voice = this.sendAudioList[index].getReadySendData();
-                        if(voice) {
-                            iCount = 0;
-                            webSocket.addSendList(voice.audioByte,voice.status);
-                            if(voice.status == 2) {
-                                if(this.sendAudioList[index].WebSocketSendEntitys.length > 0) {
-                                    console.error('----------异常结束状态后还有' + this.sendAudioList[i].length + '条数据！----------');
-                                }
-                                this.sendAudioList.splice(index,1);
-                                clearInterval(myClock);
-                                break;
-                            }
-                        } else {
-                            console.log('------没有最新的待处理数据------');
-                        }
-                    }
-                }
-
-                if (iCount > 200) {
-                    console.error('----------异常结束，原因：循环200次，耗时2S未检测到结束发送标识----------');
-                    webSocket.addSendList('',2);
-                    if(index > -1) this.sendAudioList.splice(index,1);
-                    clearInterval(myClock);
-                }
-            },10);
-        } else {
-            console.error('----------启动ASR翻译失败，原因：启动时事务ID为空！----------');
-        }
+        // One queue owns transmission and closure. A final ASR response can
+        // precede local VAD end; late packets must not recreate its sender.
+        socket?.addSendList(audioByte, status);
     }
 }
 export default VoiceService;

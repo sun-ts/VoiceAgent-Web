@@ -1,3 +1,4 @@
+import { voiceLog } from './VoiceDiagnostics.js';
 import AudioText from '../Entitys/AudioText.js'
 
 import WebSocketSendTool from '../WebSocket/WebSocketSendTool.js'
@@ -7,7 +8,7 @@ import XfWebSocketTool from '../WebSocket/XfWebSocketTool.js';
  * 语音处理类
  */
 class AudioService {
-    constructor(callBack,soundEncode) {
+    constructor(callBack,soundEncode,onFailure = () => {}) {
         this.splitWord = /((?<!\d)[.:：](?!\d)|[。,，!！?？;；])+/g;
 
         this.webSockets = [];
@@ -19,6 +20,7 @@ class AudioService {
         this.callBack = callBack;
 
         this.soundEncode = soundEncode;
+        this.onFailure = onFailure;
     }
 
     /**
@@ -126,12 +128,15 @@ class AudioService {
         const index = this.webSockets.findIndex(webSocket => webSocket.isMine(uuid));
 
         if (index > -1) {
-            console.error('-'.repeat(10) + '翻译语音错误，同一UUID反复被使用翻译' + '-'.repeat(10));
+            voiceLog('tts.duplicate_start', { utteranceId: uuid }, 'error');
             return;
         }
 
         let webSocket = new WebSocketSendTool(uuid, 
-            new XfWebSocketTool('TTS', this.soundEncode), this.callBack);
+            new XfWebSocketTool('TTS', this.soundEncode), this.callBack, (id, reason) => {
+                this.webSockets = this.webSockets.filter(socket => !socket.isMine(id));
+                if (reason !== 'server_final' && reason !== 'client_close') this.onFailure(id, reason);
+            });
         webSocket.addSendList(sendText, 2);
         
         this.webSockets.push(webSocket);
@@ -164,6 +169,16 @@ class AudioService {
             clearInterval(this.clocks[index].clock);
             this.clocks.splice(index,1);
         }
+    }
+
+    cancel(uuid) {
+        this.closeClock(uuid);
+        this.audioTexts = this.audioTexts.filter(text => !text.isMine(uuid));
+        this.webSockets = this.webSockets.filter(socket => {
+            if (socket.websocketid.substring(0, 36) !== uuid) return true;
+            socket.close();
+            return false;
+        });
     }
 }
 export default AudioService;

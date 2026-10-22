@@ -1,5 +1,13 @@
 # Vue 3 + Vite
 
+GX10 CAM++ 声纹服务与提问者打断：部署目录为 `deploy/camplus`，可整目录复制后运行 `docker compose up -d --build`。安装条件、接口、模型目录、并发参数及前端反向代理详见 [部署说明](deploy/camplus/README.md)。前端已启用声纹校验，默认通过同源 `/speaker-api` 访问；需配置代理才能使用声纹打断。运行 `npm run test:speaker` 检查声纹窗口及桌面/移动端打断流程。
+
+前端关键流程日志默认开启，在控制台筛选 `[voice]`，用 `utteranceId` 跟踪语音段，用 `requestId` 对应 GX10 JSON 日志的 `request_id`。日志级别、事件含义及超时排查详见部署说明“日志与故障定位”。
+
+Web 和手机端的“打断设置”支持“播报打断”总开关、仅同一说话人打断及最少有效字数（1–50，默认3）。开始检测前设置，检测中锁定；关闭总开关时开场白和正常回复都不会被语音打断，关闭同人限制时跳过声纹服务。刷新恢复默认设置。
+
+按环节开关日志：`.env` 设置 `VITE_VOICE_LOG_MODULES=vad,speaker,asr,interrupt`，或控制台执行 `localStorage.setItem('voice-log-modules', 'vad,speaker,asr,interrupt')` 即时生效。支持 `capture/vad/speaker/asr/llm/tts/playback/interrupt`（多项用逗号分隔），`*` 全开、`off` 全关；继续由 `voice-log-level` 控制详细程度。
+
 This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
 
 Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
@@ -68,3 +76,5 @@ npm run test:loading
 ```
 
 检查包含登录前资源隔离、成功登录、桌面/移动端 ONNX/WASM 并发下载且不重复、ONNX/WASM/MJS 失败恢复、modulepreload 不可用时的回退，以及初始化期间和就绪后退出登录的清理。移动端为 Chromium 视口和 UA 模拟。测试使用本地配置的登录账号，不输出凭据；不启动语音识别或调用大模型。可用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium 可执行文件。
+
+设置面板统一使用卡片布局，每个设置旁的问号提供详细说明（电脑悬停或键盘聚焦，手机点击）。音量筛选默认启用，允许比首次人声低 15 dB，可在开始检测前调整为 0–60 dB；只设置下限，不限制更大的声音。播报期间跳过音量筛选，仍按 VAD、声纹和字数条件决定打断。此音量是音频计算的相对值，不是校准过的环境声压分贝。

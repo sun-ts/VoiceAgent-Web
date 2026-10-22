@@ -8,6 +8,7 @@
     "build": "vite build",
     "test:loading": "npm run build && node --test tests/voice-loading.test.mjs",
     "test:vad": "node --test tests/vad-environments.test.mjs",
+    "test:speaker": "node --test tests/speaker-session.test.mjs tests/speaker-pages.test.mjs tests/websocket-lifecycle.test.mjs tests/voice-diagnostics.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

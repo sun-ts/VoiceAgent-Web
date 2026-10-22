@@ -61,8 +61,7 @@
               :key="`${item.char}-${index}`"
               class="captcha-char"
               :style="{
-                transform: `translateY(${item.offsetY}px) rotate(${item.rotate}deg)`,
-                animationDelay: `${item.delay}ms`
+                transform: `translateY(${item.offsetY}px) rotate(${item.rotate}deg)`
               }"
             >
               {{ item.char }}
@@ -126,8 +125,7 @@ const buildCaptcha = () => {
     glyphs.push({
       char,
       rotate: Math.floor(Math.random() * 36) - 18,
-      offsetY: Math.floor(Math.random() * 8) - 4,
-      delay: Math.floor(Math.random() * 240)
+      offsetY: Math.floor(Math.random() * 8) - 4
     });
   }
 
@@ -199,9 +197,7 @@ buildCaptcha();
 .orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(2px);
   opacity: 0.72;
-  animation: float 8s ease-in-out infinite;
 }
 
 .orb-a {
@@ -217,7 +213,6 @@ buildCaptcha();
   height: 480px;
   right: -140px;
   bottom: -180px;
-  animation-delay: 1.3s;
   background: radial-gradient(circle, rgba(45, 127, 255, 0.55), rgba(45, 127, 255, 0));
 }
 
@@ -226,7 +221,6 @@ buildCaptcha();
   height: 320px;
   right: 36%;
   top: 56%;
-  animation-delay: 2.4s;
   background: radial-gradient(circle, rgba(255, 138, 61, 0.45), rgba(255, 138, 61, 0));
 }
 
@@ -239,7 +233,6 @@ buildCaptcha();
   background-size: 52px 52px;
   transform: perspective(550px) rotateX(58deg);
   transform-origin: center;
-  animation: drift 18s linear infinite;
 }
 
 .login-card {
@@ -254,7 +247,6 @@ buildCaptcha();
   box-shadow:
     0 20px 50px rgba(2, 10, 26, 0.62),
     inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(8px);
   z-index: 1;
 }
 
@@ -385,16 +377,6 @@ buildCaptcha();
   pointer-events: none;
 }
 
-.captcha-box::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.32) 50%, transparent 70%);
-  transform: translateX(-115%);
-  animation: captcha-scan 3.1s linear infinite;
-  pointer-events: none;
-}
-
 .captcha-box:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow:
@@ -416,7 +398,6 @@ buildCaptcha();
   line-height: 1;
   letter-spacing: 0.5px;
   text-shadow: 0 0 8px rgba(17, 217, 255, 0.35);
-  animation: captcha-float 2.6s ease-in-out infinite;
 }
 
 .captcha-refresh {
@@ -477,44 +458,6 @@ buildCaptcha();
 
   .captcha-box {
     min-height: 50px;
-  }
-}
-
-@keyframes float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-16px);
-  }
-}
-
-@keyframes drift {
-  from {
-    transform: perspective(550px) rotateX(58deg) translateY(0);
-  }
-  to {
-    transform: perspective(550px) rotateX(58deg) translateY(52px);
-  }
-}
-
-@keyframes captcha-float {
-  0%,
-  100% {
-    filter: brightness(1);
-  }
-  50% {
-    filter: brightness(1.16);
-  }
-}
-
-@keyframes captcha-scan {
-  from {
-    transform: translateX(-115%);
-  }
-  to {
-    transform: translateX(115%);
   }
 }
 </style>

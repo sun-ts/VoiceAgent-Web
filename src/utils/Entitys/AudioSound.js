@@ -1,3 +1,5 @@
+import { voiceLog } from '../Services/VoiceDiagnostics.js';
+
 class AudioSound {
     /**
      * 
@@ -27,6 +29,7 @@ class AudioSound {
         this.SoundArray = [];
 
         this.SoundAll = null;
+        this.failed = false;
 
         if (voiceConfig) {
             this.voiceConfig = voiceConfig;
@@ -69,14 +72,14 @@ class AudioSound {
                     if(intArrays) {
                         this.SoundAll = this.convertInt16PCMToAudioBuffer(intArrays);
                     } else {
-                        console.error('-'.repeat(10) + '待播放数据转译Int16数组后为空！' + '-'.repeat(10));
+                        voiceLog('playback.decode_failed', { utteranceId: this.uuidOrg, reason: 'empty_pcm' }, 'error');
                     }
                 } else if (this.voiceConfig && this.voiceConfig.encoding == 'MP3') {
                     //console.log(intArrayAll);
                     this.SoundAll = new Blob(intArrayAll, { type: 'audio/mpeg' });
                 }
             } else {
-                console.error('-'.repeat(10) + 'base64数据为空！' + '-'.repeat(10));
+                voiceLog('playback.decode_failed', { utteranceId: this.uuidOrg, reason: 'empty_base64' }, 'error');
             }
             intArrayAll = null;
         }
@@ -94,7 +97,7 @@ class AudioSound {
             try {
                 binaryStr = atob(pureBase64);
             } catch (error) {
-                console.error("Base64 解码失败：", error);
+                voiceLog('playback.decode_failed', { utteranceId: this.uuidOrg, errorType: error?.name }, 'error');
                 throw new Error("无效的 Base64 字符串");
             }
             //console.log(base64Str);

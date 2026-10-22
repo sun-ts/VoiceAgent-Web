@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { voiceLog } from './VoiceDiagnostics.js';
 
 class AiAgentService {
     constructor(uuid) {
@@ -36,6 +37,8 @@ class AiAgentService {
      */
     async sendQuestion(uuid,model,system,question,targetLang,CallBack,config) {
         let isAnswering = false;
+        const startedAt = performance.now();
+        voiceLog('llm.start', { utteranceId: uuid });
 
         const messages = [ {"role": "system", "content": system} ];
         /// 增加上下文入参数
@@ -78,11 +81,14 @@ class AiAgentService {
             if (delta.content !== undefined && delta.content) {
                 if (!isAnswering) {
                     isAnswering = true;
+                    voiceLog('llm.first_content', { utteranceId: uuid, elapsedMs: Math.round(performance.now() - startedAt) });
                 }
                 CallBack && CallBack(uuid, delta.content, isAnswering);
             }
         }
 
+        voiceLog('llm.end', { utteranceId: uuid, reason: this.loopFlag ? 'completed' : 'interrupted',
+            elapsedMs: Math.round(performance.now() - startedAt) });
         CallBack && CallBack(uuid, '', false);
     }
 }

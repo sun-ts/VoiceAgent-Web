@@ -1,14 +1,24 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import fs from 'node:fs' // Vite 7.x 推荐用 node: 前缀引用内置模块
 import path from 'node:path'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+const speakerTarget = loadEnv(mode, process.cwd(), '').SPEAKER_PROXY_TARGET;
+return {
   base: '/',
   plugins: [vue()],
   resolve: {
     alias: [
+      ...['./logging', '../logging'].map(find => ({
+        find,
+        replacement: path.resolve(__dirname, 'src/utils/Services/VadLogger.js'),
+        customResolver(replacement, importer) {
+          if (importer?.replaceAll('\\', '/').includes('/@ricky0123/vad-web/')) return replacement;
+          return this.resolve(find, importer, { skipSelf: true });
+        },
+      })),
       // vad-web 0.0.30 has no MicVAD modelFetcher option. Redirect only its
       // internal loader to our shared fetch cache; never patch global fetch.
       {
@@ -28,6 +38,18 @@ export default defineConfig({
       plugins: [{
         name: 'shared-vad-model-fetcher',
         setup(build) {
+          build.onResolve({ filter: /^\.{1,2}\/logging$/ }, ({ importer }) => {
+            if (importer.replaceAll('\\', '/').includes('/@ricky0123/vad-web/')) {
+              return { path: 'shared-vad-logger', namespace: 'vad-logger' };
+            }
+          });
+          build.onLoad({ filter: /.*/, namespace: 'vad-logger' }, () => ({
+            contents: 'export { log } from "/src/utils/Services/VadLogger.js";',
+            loader: 'js',
+          }));
+          build.onResolve({ filter: /^\/src\/utils\/Services\/VadLogger\.js$/ }, ({ path }) => ({
+            path, external: true,
+          }));
           build.onResolve({ filter: /^\.\/default-model-fetcher$/ }, ({ importer }) => {
             if (importer.replaceAll('\\', '/').includes('/@ricky0123/vad-web/')) {
               // Keep one cache shared with app source instead of bundling a copy.
@@ -80,6 +102,13 @@ export default defineConfig({
     // }
   },
   server: {
+    proxy: speakerTarget ? {
+      '/speaker-api': {
+        target: speakerTarget,
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/speaker-api/, ''),
+      },
+    } : undefined,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp'
@@ -93,4 +122,5 @@ export default defineConfig({
     host: '0.0.0.0',
     open: true, // 启动后自动打开浏览器
   }
+};
 })

@@ -11,42 +11,13 @@
   isolation: isolate;
 }
 
-.main-container::before,
-.main-container::after {
-  content: "";
-  position: absolute;
-  width: 260px;
-  height: 260px;
-  border-radius: 50%;
-  filter: blur(58px);
-  opacity: 0.38;
-  z-index: -1;
-  animation: tech-orb-float 9s var(--tech-ease) infinite;
-}
-
-.main-container::before {
-  top: -90px;
-  right: -70px;
-  background: rgba(17, 217, 255, 0.56);
-}
-
-.main-container::after {
-  left: -88px;
-  bottom: -94px;
-  background: rgba(255, 138, 61, 0.4);
-  animation-delay: -4.5s;
-}
-
 .main-header,
-.config-card,
-.system-notice,
 .status-area,
 .chat-area {
   background: var(--tech-surface);
   border: 1px solid var(--tech-border);
   border-radius: var(--tech-radius-md);
   box-shadow: var(--tech-shadow-card);
-  backdrop-filter: blur(10px);
 }
 
 .main-header {
@@ -56,7 +27,6 @@
   gap: 16px;
   padding: 14px 18px;
   margin-bottom: 14px;
-  animation: panel-enter var(--tech-duration-slow) var(--tech-ease) both;
 }
 
 .header-title {
@@ -154,16 +124,6 @@
   overflow: hidden;
 }
 
-.logout-neon-button::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.34) 50%, transparent 70%);
-  transform: translateX(-120%);
-  animation: tech-sheen 2.8s linear infinite;
-  pointer-events: none;
-}
-
 .logout-neon-button:hover {
   transform: translateY(-1px);
   filter: saturate(1.08);
@@ -199,100 +159,6 @@
   background: transparent;
   border-right: none;
   padding-right: 0;
-  animation: panel-enter var(--tech-duration-slow) var(--tech-ease) both;
-  animation-delay: 80ms;
-}
-
-.config-card {
-  margin-bottom: 14px;
-  overflow: hidden;
-}
-
-.card-header,
-.notice-header {
-  position: relative;
-  padding: 14px 16px;
-  border-bottom: 1px solid rgba(17, 217, 255, 0.16);
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--tech-text-main);
-  background: linear-gradient(130deg, rgba(17, 217, 255, 0.12), rgba(45, 127, 255, 0.08));
-}
-
-.card-header::after,
-.notice-header::after {
-  content: "";
-  position: absolute;
-  left: 16px;
-  bottom: 0;
-  width: 56px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--tech-accent-cyan), transparent);
-}
-
-.vad-params-form,
-.model-config-form {
-  padding: 14px 16px 10px;
-}
-
-.system-notice {
-  overflow: hidden;
-}
-
-.notice-content {
-  padding: 14px 16px;
-  font-size: 13px;
-  line-height: 1.62;
-  color: var(--tech-text-sub);
-  background: rgba(255, 255, 255, 0.78);
-  border-left: 3px solid rgba(255, 138, 61, 0.64);
-}
-
-.config-card :deep(.el-form-item__label),
-.system-notice :deep(.el-form-item__label) {
-  color: var(--tech-text-sub);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.config-card :deep(.el-form-item) {
-  margin-bottom: 14px;
-}
-
-.vad-environment-hint {
-  margin: 0 0 10px;
-  color: var(--tech-text-sub);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.config-card :deep(.el-input__wrapper),
-.config-card :deep(.el-textarea__inner),
-.config-card :deep(.el-select__wrapper),
-.config-card :deep(.el-input-number .el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(20, 33, 61, 0.14);
-  box-shadow: none;
-  transition: border-color var(--tech-duration-fast) var(--tech-ease), box-shadow var(--tech-duration-fast) var(--tech-ease);
-}
-
-.config-card :deep(.el-input__wrapper.is-focus),
-.config-card :deep(.el-textarea__inner:focus),
-.config-card :deep(.el-select__wrapper.is-focused),
-.config-card :deep(.el-input-number.is-controls-right .el-input__wrapper:focus-within) {
-  border-color: rgba(17, 217, 255, 0.6);
-  box-shadow: var(--tech-shadow-focus);
-}
-
-.config-card :deep(.el-switch__core) {
-  border: 1px solid rgba(20, 33, 61, 0.2);
-  background: rgba(20, 33, 61, 0.18);
-}
-
-.config-card :deep(.el-switch.is-checked .el-switch__core) {
-  border-color: transparent;
-  background: linear-gradient(120deg, #0ccad6, #2d7fff);
 }
 
 .chat-main {
@@ -301,8 +167,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  animation: panel-enter var(--tech-duration-slow) var(--tech-ease) both;
-  animation-delay: 140ms;
 }
 
 .status-area {
@@ -342,7 +206,6 @@
 .status-dot.active {
   background: #08d3e8;
   box-shadow: 0 0 0 0 rgba(8, 211, 232, 0.54);
-  animation: tech-pulse 1.6s ease-out infinite;
 }
 
 .status-area :deep(.el-tag) {
@@ -361,15 +224,6 @@
   position: relative;
   overflow: hidden;
   transition: background-color 0.2s ease;
-}
-
-.visualizer::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.42), transparent);
-  transform: translateX(-100%);
-  animation: tech-sheen 2.8s linear infinite;
 }
 
 .visualizer-content {
@@ -445,7 +299,6 @@
   flex-direction: column;
   gap: 10px;
   margin-top: 12px;
-  animation: message-rise var(--tech-duration-normal) var(--tech-ease) both;
 }
 
 .message-row {
@@ -648,11 +501,6 @@
   .chat-main {
     padding-left: 0;
   }
-
-  .config-card,
-  .system-notice {
-    margin-bottom: 12px;
-  }
 }
 
 @media screen and (max-width: 768px) {
@@ -700,17 +548,6 @@
     height: 30px;
     font-size: 10px;
   }
-
-  .card-header,
-  .notice-header {
-    font-size: 14px;
-  }
-
-  .vad-params-form,
-  .model-config-form,
-  .notice-content {
-    padding: 12px 14px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -720,58 +557,5 @@
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
-  }
-}
-
-@keyframes tech-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(8, 211, 232, 0.55);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(8, 211, 232, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(8, 211, 232, 0);
-  }
-}
-
-@keyframes tech-sheen {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
-
-@keyframes panel-enter {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes message-rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes tech-orb-float {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-  50% {
-    transform: translateY(12px) scale(1.05);
   }
 }

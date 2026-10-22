@@ -29,25 +29,26 @@
     </el-header>
     <el-container class="content-container">
       <el-aside width="420px" class="config-aside">
-        <div class="config-card">
-          <div class="card-header">VAD参数配置</div>
+        <InterruptionControls v-model="interruptionSettings" :locked="listening || starting" />
+        <VolumeFilterControls v-model="volumeFilterSettings" :locked="listening || starting" />
+        <SettingsCard title="VAD参数配置" help="VAD 根据人声概率判断语音的开始和结束，与音量分贝筛选是两层独立条件。开始检测前设置，启动和检测中锁定；停止后可修改。">
           <el-form
             label-position="top"
             size="small"
             class="vad-params-form"
           >
-            <el-form-item label="使用环境">
+            <el-form-item>
+              <template #label><SettingHelp label="使用环境" :help="`${environmentDescription} 可手动微调，开始检测后生效；切换环境会覆盖当前 VAD 参数，不会修改音量筛选和打断设置。`" /></template>
               <el-select v-model="selectedEnvironment" :disabled="listening || starting" aria-label="使用环境">
                 <el-option v-for="environment in VAD_ENVIRONMENTS" :key="environment.value"
                   :label="environment.label" :value="environment.value" />
                 <el-option label="自定义" value="custom" disabled />
               </el-select>
             </el-form-item>
-            <p class="vad-environment-hint">{{ environmentDescription }}</p>
-            <p class="vad-environment-hint">可手动微调，点击开始检测后生效；切换环境会覆盖当前参数。</p>
             <el-row :gutter="16">
               <el-col :span="12">
-                <el-form-item label="人声阀值" prop="pThreshold">
+                <el-form-item prop="pThreshold">
+                  <template #label><SettingHelp label="人声阈值" help="开始检测一段语音所需的人声概率阈值，不是音量分贝。值越高越不容易误触发，但轻声或远处人声可能漏检；不能低于静音阈值。" /></template>
                   <el-input-number
                     v-model="pThreshold"
                     :min="nThreshold"
@@ -60,7 +61,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="静音阀值" prop="nThreshold">
+                <el-form-item prop="nThreshold">
+                  <template #label><SettingHelp label="静音阈值" help="语音开始后，用来判断是否仍有人声的概率下限。低于此值才累计静音时长；高于此值则清除静音计时。值越低越能容忍轻声，也可能延迟结束。" /></template>
                   <el-input-number
                     v-model="nThreshold"
                     :min="0.1"
@@ -73,7 +75,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="连续声音 (ms)" prop="preFrame">
+                <el-form-item prop="preFrame">
+                  <template #label><SettingHelp label="连续声音 (ms)" help="触发后需持续确认的人声时长，达到后才送入语音识别。更长可过滤短促噪声，但会增加开口响应时间。按 32 ms 音频帧向上取整。" /></template>
                   <el-input-number
                     v-model="preFrame"
                     :min="0"
@@ -86,7 +89,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="声音缓存 (ms)" prop="cacheFrame">
+                <el-form-item prop="cacheFrame">
+                  <template #label><SettingHelp label="声音缓存 (ms)" help="保留触发之前的音频，在确认人声后一起发送，减少开头音节丢失。数值越大保留越多前置声音；播报打断时至少保留 1500 ms，以保护轻声开头。" /></template>
                   <el-input-number
                     v-model="cacheFrame"
                     :min="0"
@@ -99,7 +103,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="24">
-                <el-form-item label="静音时长 (ms)" prop="silenceFrame">
+                <el-form-item prop="silenceFrame">
+                  <template #label><SettingHelp label="静音时长 (ms)" help="连续低于静音阈值达到此时长后结束当前语音。越大越能容忍句中停顿，但回答等待更久；越小响应更快，但容易截断长句。按 32 ms 音频帧向上取整。" /></template>
                   <el-input-number
                     v-model="silenceFrame"
                     :min="500"
@@ -113,14 +118,14 @@
               </el-col>
             </el-row>
           </el-form>
-        </div>
+        </SettingsCard>
 
-        <div class="config-card">
-          <div class="card-header">大模型配置</div>
+        <SettingsCard title="大模型配置" help="控制识别后的回答内容与语音播报。模型相关参数用于后续请求，不会重新生成已经开始的回答。">
           <el-form label-position="top" size="small" class="model-config-form">
             <el-row :gutter="16">
               <el-col :span="12">          
-                <el-form-item label="播报开场白" prop="isOpeningRemarks">
+                <el-form-item prop="isOpeningRemarks">
+                  <template #label><SettingHelp label="播报开场白" help="开启后，每次开始检测会显示并播报配置的开场白。开场白是否能被打断，由“播报打断”和字数设置控制。" /></template>
                   <el-switch
                     v-model="isOpeningRemarks"
                     inline-prompt
@@ -130,7 +135,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="12">          
-                <el-form-item label="大模型问答及语音播报" prop="switchValue">
+                <el-form-item prop="switchValue">
+                  <template #label><SettingHelp label="大模型问答及语音播报" help="开启后，将识别到的问题发送给大模型并播报回答；关闭后只进行语音识别，不生成新的模型回答。" /></template>
                   <el-switch
                     v-model="switchValue"
                     inline-prompt
@@ -141,7 +147,8 @@
               </el-col>
             </el-row>
 
-            <el-form-item label="提示词" prop="promptWord" v-if="switchValue">
+            <el-form-item prop="promptWord" v-if="switchValue">
+              <template #label><SettingHelp label="提示词" help="作为系统指令发送给模型，用于设置角色、回答方式或任务要求。初始值来自配置文件；清空后会发送空的系统提示词。" /></template>
               <el-input
                 v-model="promptWord"
                 type="textarea"
@@ -152,7 +159,8 @@
               />
             </el-form-item>
 
-            <el-form-item label="模型选择" prop="modelSelected" v-if="switchValue">
+            <el-form-item prop="modelSelected" v-if="switchValue">
+              <template #label><SettingHelp label="模型选择" help="选择后续问题使用的大模型。不同模型的响应速度、能力及服务费用可能不同。" /></template>
               <el-select
                 v-model="modelSelected"
                 :disabled="!switchValue"
@@ -166,7 +174,8 @@
 
             <el-row :gutter="16" v-if="switchValue">
               <el-col :span="12">
-                <el-form-item label="关联上下文" prop="numContent">
+                <el-form-item prop="numContent">
+                  <template #label><SettingHelp label="关联上下文" help="控制关联对话的数量，设为 1 时不附带历史；更大值可附带最多“设置值减 1”轮历史，具体取决于已有记录。增加上下文会增加请求长度和处理开销。" /></template>
                   <el-input-number
                     v-model="numContent"
                     :min="1"
@@ -179,7 +188,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="模型温度" prop="temperature">
+                <el-form-item prop="temperature">
+                  <template #label><SettingHelp label="模型温度" help="控制生成回答的随机性。较低值更稳定，较高值更发散；实际效果取决于所选模型及其参数支持。" /></template>
                   <el-input-number
                     v-model="temperature"
                     :min="0"
@@ -195,7 +205,8 @@
 
             <el-row :gutter="16" v-if="switchValue">
               <el-col :span="12">
-                <el-form-item label="联网搜索" prop="linkWeb">
+                <el-form-item prop="linkWeb">
+                  <template #label><SettingHelp label="联网搜索" help="允许模型在回答时使用联网搜索补充信息。实际是否搜索由模型及服务能力决定，可能增加等待时间。" /></template>
                   <el-switch
                     v-model="linkWeb"
                     inline-prompt
@@ -206,7 +217,8 @@
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="深度思考" prop="thinking">
+                <el-form-item prop="thinking">
+                  <template #label><SettingHelp label="深度思考" help="允许支持该能力的模型进行更深入的推理，可能增加响应时间和用量；实际行为取决于模型支持。" /></template>
                   <el-switch
                     v-model="thinking"
                     inline-prompt
@@ -218,14 +230,8 @@
               </el-col>
             </el-row>
           </el-form>
-        </div>
+        </SettingsCard>
 
-        <div class="system-notice">
-          <div class="notice-header">系统交互说明</div>
-          <div class="notice-content">
-            系统采用实时语音交互，操作人可直接与机器人对话并切换回答模型，对话过程可随时打断语音机器人回复，打断规则：新录入的语音字数大于5，如果小于5个字机器人会继续回复你的上一个问题。
-          </div>
-        </div>
       </el-aside>
 
       <el-main class="chat-main">
@@ -327,6 +333,12 @@ import { computed, getCurrentInstance, reactive, toRefs, ref, onMounted, onUnmou
 // import { VideoPlay, VideoPause, Loading } from '@element-plus/icons-vue'
 /// VAD和ONNX运行时
 import { createVoiceDetector } from '../utils/Services/VoiceRuntime.js'
+import InterruptionControls from './InterruptionControls.vue';
+import SettingsCard from './SettingsCard.vue';
+import SettingHelp from './SettingHelp.vue';
+import VolumeFilterControls from './VolumeFilterControls.vue';
+import { DEFAULT_VOLUME_FILTER_SETTINGS } from '../utils/Services/VolumeFilterSettings.js';
+import { DEFAULT_INTERRUPTION_SETTINGS } from '../utils/Services/InterruptionSettings.js';
 import { VAD_ENVIRONMENTS, OFFICE_VAD_PARAMETERS, toVoiceServiceParams } from '../utils/Services/VadEnvironments.js'
 
 /// 实体类和服务类
@@ -334,6 +346,7 @@ import VoiceText from '../utils/Entitys/VoiceText.js'
 import IatResult from '../utils/Entitys/IatResult.js'
 import AudioSound from '../utils/Entitys/AudioSound.js'
 import VoiceService from '../utils/Services/VoiceService.js'
+import { voiceLog } from '../utils/Services/VoiceDiagnostics.js'
 import AiAgentService from '../utils/Services/AiAgentService.js'
 import AudioService from '../utils/Services/AudioService.js'
 
@@ -368,6 +381,8 @@ const indicatorColor = ref('#cccccc')
 
 ///页面控制控件
 const switchValue = ref(true)
+const interruptionSettings = ref({ ...DEFAULT_INTERRUPTION_SETTINGS });
+const volumeFilterSettings = ref({ ...DEFAULT_VOLUME_FILTER_SETTINGS });
 const isOpeningRemarks = ref(true);
 const isDisabled = ref(false)
 const promptWord = ref('');
@@ -475,6 +490,7 @@ const toggleVAD = async () => {
   if (loading.value || starting.value || !vad.value || initError.value) return;
   if (listening.value) {
     await vad.value.pause()
+    voiceService.value?.reset();
     closeVoicePlayThread();
     listening.value = false
     statusText.value = '已停止'
@@ -485,11 +501,13 @@ const toggleVAD = async () => {
     try {
       // Apply before start(): the first audio frame must use the selected profile.
       voiceService.value.setVadParam(...toVoiceServiceParams(vadParameters));
+      voiceService.value.speaker.configureInterruption(interruptionSettings.value);
+      voiceService.value.configureVolumeFilter(volumeFilterSettings.value);
       await vad.value.start();
     } catch (err) {
       initError.value = true;
       statusText.value = '语音启动失败，请检查麦克风权限后重新加载';
-      console.error('VAD启动错误:', err);
+      voiceLog('vad.start_failed', { errorType: err?.name }, 'error');
       return;
     } finally {
       starting.value = false;
@@ -497,7 +515,6 @@ const toggleVAD = async () => {
     if (initialization.signal.aborted) return;
     VoicePlayThread();
     listening.value = true;
-    voiceService.value.resetDecibel();
     statusText.value = '正在检测...';
 
     ///开场白展示及播报
@@ -508,6 +525,7 @@ const toggleVAD = async () => {
       voiceText.addVoiceAnswer(instance.appContext.config.globalProperties.$openingRemarks,false);
       /// 获取语音数据
       if(switchValue.value) {
+        voiceService.value.speaker.beginOpening();
         audioService.value.AddSendContentToAudio(instance.appContext.config.globalProperties.$uuid(), 
           voiceText.answerText, false);
       }
@@ -533,14 +551,19 @@ const initVAD = async () => {
 
     /// 初始化声音检测类
     voiceService.value = new VoiceService(...toVoiceServiceParams(vadParameters),
-      instance, showVociceText, breakAnswer, inputVolume);
-    audioService.value = new AudioService(textToTTSCallBack, soundEncode.value);
+      instance, showVociceText, null, inputVolume, {
+        isReplyActive: () => playSoundStatus.value || Boolean(audioObj.value) || audioSounds.value.length > 0 ||
+          modelThinkingUUIDList.value.length > 0 || audioService.value?.audioTexts.length > 0 ||
+          audioService.value?.webSockets.length > 0,
+      });
+    audioService.value = new AudioService(textToTTSCallBack, soundEncode.value, textToTTSFailure);
     
     // 创建VAD实例
     vad.value = await createVoiceDetector({
       processorType : 'auto',
       // 帧处理回调 - 实时更新状态
       onFrameProcessed: (probs, frame) => {
+        if (initialization.signal.aborted) return;
         //16000每帧32ms音频
         voiceService.value.voiceTranslate(probs, frame);
       },
@@ -557,7 +580,7 @@ const initVAD = async () => {
     loading.value = false
     initError.value = true;
     statusText.value = '语音引擎加载失败，请检查网络后重新加载';
-    console.error('VAD初始化错误:', err)
+    voiceLog('vad.init_failed', { errorType: err?.name }, 'error');
   }
 }
 
@@ -570,6 +593,7 @@ const submitUserInput = () => {
   }
 
   const uuid = instance.appContext.config.globalProperties.$uuid();
+  voiceService.value.reset();
 
   if(playSoundStatus.value) {
     breakUUID.value = uuid;
@@ -602,6 +626,7 @@ const handleKeyDown = (e) => {
  * 展示翻译内容
  */
 const showVociceText = async (uuid:string,data:string) => {
+  if (!voiceService.value.speaker.has(uuid)) return;
   let index = voiceTexts.value.findIndex(voiceText => voiceText.isMine(uuid));
   
   if(index < 0) {
@@ -615,7 +640,7 @@ const showVociceText = async (uuid:string,data:string) => {
   // console.log('返回数据:'+data)
   const res = JSON.parse(data)
   if (res.code != 0) {
-    console.log(`error code ${res.code}, reason ${res.message}`)
+    voiceLog('asr.failed', { utteranceId: uuid, code: res.code }, 'error');
     voiceTexts.value[index].voiceText = '翻译出错错误编码：' + res.code + ',错误信息：' + res.message;
     closeWebSocket(voiceService.value,uuid);
     return;
@@ -652,41 +677,28 @@ const showVociceText = async (uuid:string,data:string) => {
     voiceTexts.value[index].voiceText = str;
     // if(switchValue.value)
     //   voiceTexts.value[index].targetLang = selectedValue.value;
-    if (isContinue.value) {
-      if (!breakFlag.value && breakUUID.value && breakUUID.value == uuid){
-        let rexg = /([,，.。!！?？;；:：]+)/g,
-          noSplitWorld = str.trim().replace(rexg,'');
-        if (noSplitWorld.length > 5) {
-          breakFlag.value = true;
-          breakSuccess(uuid);
-        }
-      }
+    if (voiceService.value.speaker.authorizeText(uuid, str)) {
+      breakUUID.value = uuid;
+      breakFlag.value = true;
+      await breakSuccess(uuid);
     }
   } else {
     voiceTexts.value.splice(index,1);
   }
 
   // res.data.status ==2 说明数据全部返回完毕，可以关闭连接，释放资源
-  if (res.data.status == 2) { 
+  if (res.data.status == 2) {
+    voiceLog('asr.final', { utteranceId: uuid, characters: (str.match(/[\p{L}\p{N}]/gu) || []).length });
     closeWebSocket(voiceService.value,uuid);
     iatResults.value.splice(indexIatResult,1);
 
-    if(switchValue.value && str && str.trim()) {
-      if(isContinue.value && !breakFlag.value) {
-        //不需要调用翻译和转译
-      } else {
-        translateToOtherLanguage(uuid);
-      }
+    if (switchValue.value && str && str.trim() && voiceService.value.speaker.shouldAnswer(uuid)) {
+      translateToOtherLanguage(uuid);
     }
-
-    if (breakUUID.value && breakUUID.value == uuid){
-      if(breakFlag.value) {
-        breakSuccess(uuid).then(() => {
-          breakUUID.value = '';});
-        isContinue.value = false;
-      } else {
-        breakUUID.value = '';
-      }
+    voiceService.value.speaker.finish(uuid);
+    if (breakUUID.value === uuid) {
+      breakUUID.value = '';
+      breakFlag.value = false;
     }
   }
 }
@@ -695,6 +707,7 @@ const showVociceText = async (uuid:string,data:string) => {
  * 调用大模型进行文本翻译
  */
 const translateToOtherLanguage = async (uuid) => {
+  voiceService.value.speaker.activateQuestion(uuid);
   const aiAgent = new AiAgentService(uuid);
   aiAgents.value.push(aiAgent);
 
@@ -723,10 +736,10 @@ const translateToOtherLanguage = async (uuid) => {
         beContext:beContext
       }).catch((err) => {
         clearModelThinking(uuid);
-        console.error('大模型请求失败:', err);
+        voiceLog('llm.failed', { utteranceId: uuid, errorType: err?.name }, 'error');
       });
   } else {
-    console.error("-".repeat(10) + "语音翻译查找待识别文本时失败！" + "-".repeat(10));
+    voiceLog('llm.record_missing', { utteranceId: uuid }, 'error');
   }
 }
 
@@ -742,11 +755,7 @@ const translateCallBack = async (uuid, content, isAnswer) => {
   /// 处理打断逻辑
   let indexBreak = breakModelUUIDList.value.findIndex(item => item == uuid);
   if(indexBreak > -1) {
-    if(!isAnswer) {
-      breakModelUUIDList.value.splice(indexBreak,1);
-    } else {
-      return;
-    }
+    return;
   } else if (breakUUID.value && breakFlag.value && breakUUID.value != uuid) {
     breakModelUUIDList.value.push(uuid);
     isAnswer = false;
@@ -758,9 +767,20 @@ const translateCallBack = async (uuid, content, isAnswer) => {
     audioService.value.AddSendContentToAudio(uuid, content, isAnswer);
     voiceTexts.value[index].addVoiceAnswer(content, isAnswer);
   } else {
-    console.error("-".repeat(10) + "语音信息处理数据失败！" + "-".repeat(10));
+    voiceLog('llm.record_missing', { utteranceId: uuid }, 'error');
   }
 }
+
+// Keep a lightweight failed-segment marker so ordered playback can advance.
+const textToTTSFailure = (uuid, reason) => {
+  if (breakSoundUUIDList.value.includes(uuid.substring(0, 36))) return;
+  const index = audioSounds.value.findIndex(sound => sound.isMine(uuid));
+  const failed = new AudioSound(uuid, audioContext.value, { encoding: soundEncode.value });
+  failed.failed = true;
+  if (index >= 0) audioSounds.value.splice(index, 1, failed);
+  else audioSounds.value.push(failed);
+  voiceLog('playback.segment_discard', { utteranceId: uuid, stage: 'TTS', reason }, 'warn');
+};
 
 /**
  * 文本转语音的回调函数
@@ -769,7 +789,7 @@ const textToTTSCallBack = async (uuid, data) => {
   const res = JSON.parse(data);
   //console.log('TTS返回数据:'+data)
   if (res.code != 0) {
-    console.error(`${res.code}: ${res.message}`);
+    voiceLog('tts.failed', { utteranceId: uuid, code: res.code }, 'error');
     closeWebSocket(audioService.value,uuid);
     return;
   }
@@ -778,11 +798,8 @@ const textToTTSCallBack = async (uuid, data) => {
   let uuidOrg = uuid.substring(0,36);
   let indexBreak = breakSoundUUIDList.value.findIndex(item => item == uuidOrg);
   if(indexBreak > -1) {
-    if(res.data.status == 2) {
-      breakSoundUUIDList.value.splice(indexBreak,1);
-    } else {
-      return;
-    }
+    closeWebSocket(audioService.value,uuid);
+    return;
   } else if (breakUUID.value && breakFlag.value && breakUUID.value != uuidOrg) {
     breakSoundUUIDList.value.push(uuidOrg);
     closeWebSocket(audioService.value,uuid);
@@ -815,7 +832,7 @@ const textToTTSCallBack = async (uuid, data) => {
  */
 const VoicePlayThread = () => {
   playClock.value = setInterval(() => {
-    if(playSoundStatus.value) return;
+    if(playSoundStatus.value || audioObj.value) return;
 
     if(breakUUID.value) return;
 
@@ -851,6 +868,8 @@ const pcmPlayer = () => {
     audioBufferSource.value.buffer = playPauseSound.value.SoundAll;
     audioBufferSource.value.connect(audioContext.value.destination);
     audioBufferSource.value.start(0);
+    const playingId = playPauseSound.value.uuidOrg;
+    voiceLog('playback.start', { utteranceId: playingId, stage: 'PCM' });
     playPause.value = 0;
     isContinue.value = false;
     playSoundStatus.value = true;
@@ -858,6 +877,7 @@ const pcmPlayer = () => {
 
     // 播放结束后释放临时 URL（优化性能）
     audioBufferSource.value.onended = () => {
+      voiceLog('playback.end', { utteranceId: playingId, stage: 'PCM' });
       //console.log('-'.repeat(10) + audioContext.value.state + '-'.repeat(10))
       if(audioBufferSource.value)
         audioBufferSource.value.disconnect();
@@ -890,7 +910,7 @@ const mp3Player = () => {
           audioObj.value = new Audio(audioUrl.value);
           audioObj.value.load();
         } else {
-          console.log('-'.repeat(10) + '音频数据格式错误，非Blob格式!' + '-'.repeat(10));
+          voiceLog('playback.invalid_audio', { reason: 'not_blob' }, 'error');
         }
       } else {
         return;
@@ -898,23 +918,31 @@ const mp3Player = () => {
     } else {
       isContinue.value = false;
       if (!audioObj.value) {
-        console.log('-'.repeat(10) + '续播失败!' + '-'.repeat(10));
+        voiceLog('playback.resume_failed', { reason: 'missing_audio_element' }, 'warn');
         return;
       }
     }
     /// 播放结束后释放临时 URL（优化性能）
-    audioObj.value.onended = () => {
+    const playingAudio = audioObj.value;
+    const playingUrl = audioUrl.value;
+    const playingId = playPauseSound.value.uuidOrg;
+    playingAudio.onended = () => {
+      if (audioObj.value !== playingAudio) return;
+      voiceLog('playback.end', { utteranceId: playingId, stage: 'MP3' });
       audioObj.value = null;
-      (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
+      (webkitURL||window.URL).revokeObjectURL(playingUrl);
       audioUrl.value = null;
       playSoundStatus.value = false;
     };
 
     /// 播放音频数据
-    audioObj.value.play().catch(err => {
-        console.error('-'.repeat(10) + '播放失败：' + '-'.repeat(10), err);
+    playingAudio.play().then(() => {
+      if (audioObj.value === playingAudio) voiceLog('playback.start', { utteranceId: playingId, stage: 'MP3' });
+    }).catch(err => {
+        if (audioObj.value !== playingAudio) return;
+        voiceLog('playback.failed', { errorType: err?.name }, 'error');
         audioObj.value = null;
-        (webkitURL||window.URL).revokeObjectURL(audioUrl.value);
+        (webkitURL||window.URL).revokeObjectURL(playingUrl);
         audioUrl.value = null;
         playSoundStatus.value = false;
       });
@@ -948,20 +976,19 @@ const mp3Player = () => {
  * 获取应该播放的
  */
 const GetVoicePlay = ():AudioSound => {
-  if(audioSounds.value.length < 1)
-    return null;
-  let indexAudioSound = -1;
-  if(play_UUID.value == '') {
-    indexAudioSound = audioSounds.value.findIndex(audioSound => audioSound.uuidNum == 1);
-  } else {
-    indexAudioSound = audioSounds.value.findIndex(
-      audioSound => audioSound.uuidOrg == play_UUID.value && 
-        audioSound.uuidNum == play_Num.value + 1);
-  }
-  if(indexAudioSound > -1) {
-    if(audioSounds.value[indexAudioSound].SoundAll) {
-      return audioSounds.value.splice(indexAudioSound,1)[0];
+  while (audioSounds.value.length > 0) {
+    const index = audioSounds.value.findIndex(sound => play_UUID.value === ''
+      ? sound.uuidNum === 1
+      : sound.uuidOrg === play_UUID.value && sound.uuidNum === play_Num.value + 1);
+    if (index < 0) return null;
+    const sound = audioSounds.value[index];
+    if (sound.failed) {
+      audioSounds.value.splice(index, 1);
+      play_UUID.value = sound.uuidFlag === 'true' ? '' : sound.uuidOrg;
+      play_Num.value = sound.uuidFlag === 'true' ? 0 : sound.uuidNum;
+      continue;
     }
+    return sound.SoundAll ? audioSounds.value.splice(index, 1)[0] : null;
   }
   return null;
 }
@@ -970,6 +997,10 @@ const GetVoicePlay = ():AudioSound => {
  * 声音停止播放方法
  */
 const closeVoicePlayThread = () => {
+  // Also retire pending model/TTS work so restart cannot resurrect an old reply.
+  void breakSuccess('');
+  breakUUID.value = '';
+  breakFlag.value = false;
   if (playClock.value) {
     clearInterval(playClock.value);
   }
@@ -996,37 +1027,41 @@ const closeVoicePlayThread = () => {
 }
 
 /**
- * 打断播报
- */
-const breakAnswer = async (uuid) => {
-  if(breakUUID.value != uuid)
-    breakUUID.value = uuid;
-  else
-    return;
-  if (playSoundStatus.value) {
-    isContinue.value = true;
-  }
-  /// MP3停止播放、PCM播放器在下一个周期停止
-  if (soundEncode.value == 'MP3') {
-    if(audioObj.value && playSoundStatus.value) {
-      audioObj.value.pause();
-    }
-    playSoundStatus.value = false;
-  }
-}
-
-/**
  * 成功打断
  */
 const breakSuccess = async (uuid) => {
+  voiceLog('playback.stop', { utteranceId: uuid, reason: uuid ? 'new_question' : 'capture_stopped' });
+  // Stop only after speaker and text authorization. Candidate audio never pauses playback.
+  const oldIds = new Set<string>([
+    ...aiAgents.value.filter(agent => !agent.isMine(uuid)).map(agent => agent.uuid),
+    ...audioSounds.value.map(sound => sound.uuidOrg),
+    playPauseSound.value?.uuidOrg,
+    ...(audioService.value?.audioTexts || []).map(text => text.uuid),
+    ...(audioService.value?.webSockets || []).map(socket => socket.websocketid.substring(0, 36)),
+  ].filter(id => id && id !== uuid));
+  for (const id of oldIds) {
+    if (!breakModelUUIDList.value.includes(id)) breakModelUUIDList.value.push(id);
+    if (!breakSoundUUIDList.value.includes(id)) breakSoundUUIDList.value.push(id);
+    audioService.value?.cancel(id);
+  }
+  if (audioBufferSource.value) {
+    const source = audioBufferSource.value;
+    audioBufferSource.value = null;
+    source.onended = null;
+    source.stop();
+    source.disconnect();
+  }
+  playSoundStatus.value = false;
+  isContinue.value = false;
   /// PCM播放器在下一个周期停止、MP3立即停止停止播放
   if (soundEncode.value == 'MP3') {
     if(audioObj.value) {
-      audioObj.value.currentTime = 0;
-      // 可选：重置播放状态，避免异常
-      audioObj.value.src = '';
-      audioObj.value.load(); 
+      const stoppedAudio = audioObj.value;
       audioObj.value = null;
+      stoppedAudio.onended = null;
+      stoppedAudio.currentTime = 0;
+      stoppedAudio.src = '';
+      stoppedAudio.load();
       URL.revokeObjectURL(audioUrl.value);
       audioUrl.value = null;
     }
@@ -1104,6 +1139,8 @@ watch(
 // 组件卸载时清理
 onUnmounted(async () => {
   initialization.abort();
+  voiceService.value?.reset();
+  closeVoicePlayThread();
   try {
     await vad.value?.destroy();
   } finally {
