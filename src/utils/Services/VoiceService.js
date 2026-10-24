@@ -67,6 +67,15 @@ class VoiceService {
             client: new SpeakerClient(),
             isReplyActive: speakerOptions.isReplyActive || (() => false),
             send: (uuid, audio, status) => this.sendAudioData(uuid, audio, status),
+            onDiscard: (uuid) => {
+                this.getWebSocketShiftByUUID(uuid)?.close();
+                if (this.uuidAsr === uuid) {
+                    this.linkedList = [];
+                    this.isTrigger = this.isSend = false;
+                    this.iStartTime = this.iEndTime = this.iSendCount = 0;
+                    this.uuidAsr = '';
+                }
+            },
             onError: speakerOptions.onError || (error => voiceLog('speaker.unavailable', { errorType: error?.name }, 'warn')),
         });
 

@@ -15,6 +15,10 @@ docker compose logs -f camplus
 curl --fail http://127.0.0.1:8008/healthz
 ```
 
+声纹阈值统一在本目录 `.env` 配置：`SIMILARITY_THRESHOLD=0.30`。Compose 通过 `env_file: .env` 将它传入后端，`app.py` 不另设默认阈值；修改后执行 `docker compose up -d --force-recreate camplus`。直接运行 Python 服务时，须先将 `.env` 导入进程环境。
+
+前端首次校验长度统一在项目根目录 `.env` 配置：`VITE_SPEAKER_WINDOW_MS=1024`（200–1504ms，按32ms帧向上取整；缺失或无效时回退1024ms）。开发时重启 Vite，生产环境重新构建前端。根目录 `.env_pro` 是按项目安装说明复制为 `.env` 的模板，不会被 Vite 自动加载。
+
 模型 `iic/speech_campplus_sv_zh-cn_16k-common`（默认 `v2.0.2`）首次启动自动下载，宿主机位置固定为 `/home/blingcode/models/funasr/camplus`。下载完成标记、配置和权重存在时重启复用；下载中断会在重启时重试。模型加载和 CUDA 预热成功后才提供健康检查。首次下载超过 healthcheck 的10分钟宽限期时，容器可能暂时显示 unhealthy，查看下载日志并等待完成。不要使用缺少 FunASR `config.yaml` 的旧版 v1.0.0。
 
 若使用手工预下载模型，确保该目录直接包含 `configuration.json`、`config.yaml` 和 `campplus_cn_common.bin`，确认文件完整后创建 `.download-complete`。更换模型版本时，停止容器、备份并更换整个模型目录；不要仅修改 `MODEL_REVISION` 期待覆盖已有权重。
@@ -39,7 +43,7 @@ curl --fail http://127.0.0.1:8008/healthz
 {"pcm_base64":"<PCM16 Base64>","sample_rate":16000,"reference_embedding":[192个浮点数]}
 ```
 
-返回 `{"matched":true,"score":0.82,"threshold":0.6,"embedding":[192个浮点数],"duration_ms":1024}`。`score` 是原始余弦相似度（-1到1），`matched` 为 `score >= SIMILARITY_THRESHOLD`。0.60仅为可配置起点，必须用现场同人/异人、扬声器回声、噪声录音标定，不能视为准确率保证。说话人混叠也会影响结果。
+返回 `{"matched":true,"score":0.82,"threshold":0.30,"embedding":[192个浮点数],"duration_ms":1024}`。`score` 是原始余弦相似度（-1到1），`matched` 为 `score >= SIMILARITY_THRESHOLD`。0.30仅为可配置起点，必须用现场同人/异人、扬声器回声、噪声录音标定，不能视为准确率保证。说话人混叠也会影响结果。
 
 `GET /healthz` 返回模型就绪状态、实例数及排队/执行中的请求数。
 
@@ -82,9 +86,10 @@ location /speaker-api/ {
 - 正常提问继续实时送讯飞 ASR；从 VAD 保留的有效语音中截取最多24000个采样（1500ms）提取声纹，不等待整段长问题。
 - 回复生成、待播和播放期间（包括开场白），VAD 触发前至少保留1500ms音频，按32ms帧向上取整；空闲提问仍使用环境面板的声音缓存配置，降低播报时轻声起句被截断的概率。
 - 回复生成、待播和播放期间，候选语音先按32帧校验（1024ms）；若不匹配，保留这32帧，再补15帧，以47帧（1504ms）复检一次。阈值不变，校验期间原回复继续。
-- 47帧复检仍不匹配或请求异常时，整组丢弃，不送 ASR；后续音频从新的32帧首检开始。段尾不足首检或复检长度，在当前 VAD 配置的连续静音结束时丢弃，静音不能补齐窗口。内部短暂停顿保留在音频中。
+- 47帧复检仍不匹配或请求异常时，整组丢弃，不送 ASR；后续音频从新的32帧首检开始。段尾不足32帧（1024ms）时丢弃；首检未匹配且有新增语音时，段尾可用不足47帧的实际音频复检。不重复校验相同音频，静音不能补齐窗口。内部短暂停顿保留在音频中。
 - 匹配后把已缓存音频及后续音频按顺序送 ASR；达到页面“打断所需字数”（默认3，范围1–50）才停止 PCM/MP3 和旧回复，再接收追问。字母、数字、汉字计数，标点空格不计。
 - 首组声纹在首检或复检通过后，向 ASR 补送其前面的低置信度起句缓存，缓存不参与声纹校验。整组最终失败才一并丢弃该起句缓存；等待校验期间的句中停顿按顺序保留。
+- 异常清理：每秒检查待完成的语音记录，连续10秒无采集帧或单段累计120秒即丢弃、取消该段声纹请求并关闭 ASR 连接；已有的32条记录上限和约6秒候选缓存上限继续生效。页面离开、停止监听及组件卸载会清空缓冲并取消请求；暂停设备失败也不跳过清理。正常完成后只保留当前提问者参考声纹，不保留原始音频。
 - 普通回答遇到登记失败、超时、503、缺少参考声纹时不允许打断。恢复空闲后可通过新的语音问题重新登记；没有参考声纹的文字提问仍遵循此规则。
 - 开场白尚无提问者，启用“播报打断”时允许首位说话人的音频直接进入 ASR，并在启用同人校验时提取声纹；达到配置的有效字数后才停止播报。首次提问生效或停止检测后退出此模式。
 - Web 与手机端均提供“打断设置”：总开关“播报打断”、同一说话人限制和有效字数。开始检测前设置，启动中和检测中锁定；停止后可重新设置。总开关关闭时，开场白及正常回复期间均不接受语音打断；关闭同人限制时不请求声纹登记或比对，但仍需达到字数条件。刷新页面恢复默认开启/同人校验/3字。
@@ -100,11 +105,11 @@ location /speaker-api/ {
 | `speaker.enroll_start` / `speaker.enroll_ready` | 提问者声纹提取开始/成功（≤1500ms） |
 | `speaker.enroll_failed` | 无法登记，查看对应 HTTP 请求是否超时或失败 |
 | `speaker.question_active` | 当前回复绑定提问者，`referenceReady=false` 表示还在等待声纹或没有声纹 |
-| `speaker.window_ready` | 第 `window` 次比对，`stage=short/extended` 区分32帧首检和47帧复检，包含 `durationMs` |
-| `speaker.window_extend` | 32帧首检未匹配，保留音频等待补足47帧复检，尚未送给 ASR |
+| `speaker.window_ready` | 第 `window` 次比对，`stage=short/extended` 区分32帧首检和47帧复检，`final_extended` 表示句末不足完整复检窗口的校验，包含 `durationMs` |
+| `speaker.window_extend` | 首检未匹配，保留音频等待补足47帧或句末有新增语音时复检，尚未送给 ASR |
 | `speaker.http_start` / `speaker.http_result` | 请求与结果，包含 `requestId`、耗时、`score`、`threshold`、`matched` |
 | `speaker.window_match` / `speaker.window_discard` | 放行给 ASR / 丢弃当前窗口，`reason` 区分异人和校验异常 |
-| `speaker.utterance_discard` | 丢弃候选段：`silence_incomplete_window` 不足首检32帧或复检47帧，`no_reference` 没有参考声纹，`buffer_overflow` 积压过多 |
+| `speaker.utterance_discard` | 丢弃候选段：`audio_idle_timeout` 连续10秒无帧，`utterance_timeout` 单段达到120秒，`silence_incomplete_window` 不足32帧或首检未匹配后无新增语音，`no_reference` 没有参考声纹，`buffer_overflow` 积压过多 |
 | `interrupt.settings` | 应用新的总开关、同人校验、最少字数配置 |
 | `interrupt.authorized` / `interrupt.rejected` | 达到配置的有效字数 / 结束时仍不足，`minCharacters` 为当前字数设置 |
 | `asr_tts.result` / `asr.final` | 讯飞终态及 ASR 有效字符数量，不包含文字内容 |

@@ -164,3 +164,26 @@ def test_validation_and_cors_preflight_are_observable(caplog, monkeypatch):
         assert preflight.status_code == 200
     events = [json.loads(record.message) for record in caplog.records if record.name == 'camplus']
     assert any(item['event'] == 'http.complete' and item['status'] == 422 for item in events)
+
+
+def test_configured_similarity_threshold_with_1024ms_audio(monkeypatch):
+    monkeypatch.setenv('SIMILARITY_THRESHOLD', '0.30')
+    with TestClient(create_app(Settings(), Model)) as client:
+        for similarity, matched in [(0.29, False), (0.300001, True), (0.5, True)]:
+            reference = [similarity, (1 - similarity ** 2) ** 0.5] + [0.0] * 190
+            response = client.post('/v1/verify', json={**audio(1024), 'reference_embedding': reference})
+            assert response.status_code == 200
+            assert response.json()['threshold'] == 0.30
+            assert response.json()['matched'] is matched
+
+
+def test_similarity_threshold_is_read_from_environment(monkeypatch):
+    monkeypatch.setenv('SIMILARITY_THRESHOLD', '0.45')
+    with TestClient(create_app(Settings(), Model)) as client:
+        reference = [0.4, (1 - 0.4 ** 2) ** 0.5] + [0.0] * 190
+        response = client.post('/v1/verify', json={**audio(), 'reference_embedding': reference})
+        assert response.json()['threshold'] == 0.45
+        assert response.json()['matched'] is False
+    monkeypatch.delenv('SIMILARITY_THRESHOLD')
+    with pytest.raises(KeyError, match='SIMILARITY_THRESHOLD'):
+        Settings()

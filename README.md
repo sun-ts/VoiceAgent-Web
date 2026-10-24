@@ -78,3 +78,6 @@ npm run test:loading
 检查包含登录前资源隔离、成功登录、桌面/移动端 ONNX/WASM 并发下载且不重复、ONNX/WASM/MJS 失败恢复、modulepreload 不可用时的回退，以及初始化期间和就绪后退出登录的清理。移动端为 Chromium 视口和 UA 模拟。测试使用本地配置的登录账号，不输出凭据；不启动语音识别或调用大模型。可用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium 可执行文件。
 
 设置面板统一使用卡片布局，每个设置旁的问号提供详细说明（电脑悬停或键盘聚焦，手机点击）。音量筛选默认启用，允许比首次人声低 15 dB，可在开始检测前调整为 0–60 dB；只设置下限，不限制更大的声音。播报期间跳过音量筛选，仍按 VAD、声纹和字数条件决定打断。此音量是音频计算的相对值，不是校准过的环境声压分贝。
+
+
+声纹打断配置：前端在根目录 `.env` 设置 `VITE_SPEAKER_WINDOW_MS=1024`，控制首次校验音频长度；修改后重启开发服务或重新构建。后端在 `deploy/camplus/.env` 设置 `SIMILARITY_THRESHOLD=0.30`，由 Docker Compose 的 `env_file` 注入，修改后重新创建容器。

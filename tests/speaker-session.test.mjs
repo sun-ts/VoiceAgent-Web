@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import SpeakerSession, { hasInterruptionText } from '../src/utils/Services/SpeakerSession.js';
+import SpeakerSession, { hasInterruptionText, speakerWindowChunks } from '../src/utils/Services/SpeakerSession.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const chunk = (value = 1) => new Uint8Array(1024).fill(value);
@@ -131,10 +131,10 @@ test('silence cannot pad the extended retry and its partial audio never enters t
   await h.enroll(); h.sent.length = 0;
   h.feed('candidate', 32); await tick();
   h.feed('candidate', 14); h.feed('candidate', 38, 0, false); h.end('candidate'); await tick();
-  assert.deepEqual(sizes, [32768]);
+  assert.deepEqual(sizes, [32768, 47104]);
   assert.equal(h.sent.length, 0);
   h.feed('next', 31); await tick();
-  assert.deepEqual(sizes, [32768]);
+  assert.deepEqual(sizes, [32768, 47104]);
 });
 
 test('extended retry preserves internal pauses while excluding trailing silence', async () => {
@@ -158,7 +158,7 @@ test('extended retry preserves internal pauses while excluding trailing silence'
 
 test('trailing silence cannot complete a short window and is never reused by next utterance', async () => {
   const h = setup(); await h.enroll(); h.sent.length = 0;
-  h.feed('short', 30); h.feed('short', 38, 0, false); h.end('short'); await tick();
+  h.feed('short', 31); h.feed('short', 38, 0, false); h.end('short'); await tick();
   assert.equal(h.verified.length, 0); assert.equal(h.sent.length, 0);
   h.feed('next', 31); await tick(); assert.equal(h.verified.length, 0);
 });
@@ -336,5 +336,130 @@ test('opening exception is cleared on reset or question activation, including qu
     h.feed('candidate', 32); h.end('candidate'); await tick();
     assert.equal(h.sent.length, 0, 'missing reference on a normal reply must not bypass verification');
     assert.equal(h.session.shouldAnswer('candidate'), false);
+  }
+});
+
+for (const frames of [32, 37]) test(`ended ${frames * 32}ms phrase can interrupt after speaker and text match`, async () => {
+  const h = setup(); await h.enroll(); h.sent.length = 0;
+  h.feed('candidate', 8, 9, false);
+  h.feed('candidate', frames, 3);
+  h.feed('candidate', 38, 0, false); h.end('candidate'); await tick();
+  assert.equal(h.verified.length, 1);
+  assert.equal(h.verified[0].pcm.length, 32768);
+  assert.equal(h.verified[0].pcm[0], 3);
+  assert.deepEqual(h.sent.slice(0, -1).map(frame => frame.pcm[0]), [...Array(8).fill(9), ...Array(frames).fill(3)]);
+  assert.equal(h.sent[0].status, 0);
+  assert.equal(h.sent.at(-1).status, 2);
+  assert.equal(h.session.authorizeText('candidate', '等下'), false);
+  assert.equal(h.session.authorizeText('candidate', '请等一下'), true);
+});
+
+test('ended partial retry preserves onset and can match with new speech below 1504ms', async () => {
+  const sizes = [];
+  const h = setup({ verify: async pcm => { sizes.push(pcm.length); return sizes.length === 2; } });
+  await h.enroll(); h.sent.length = 0;
+  h.feed('candidate', 32, 3); await tick();
+  h.feed('candidate', 5, 4); h.end('candidate'); await tick();
+  assert.deepEqual(sizes, [32768, 37888]);
+  assert.deepEqual(h.sent.slice(0, -1).map(frame => frame.pcm[0]), [...Array(32).fill(3), ...Array(5).fill(4)]);
+  assert.equal(h.sent.at(-1).status, 2);
+});
+
+for (const failure of ['mismatch', 'offline']) test(`short phrase ${failure} never bypasses verification or retries identical audio`, async () => {
+  let calls = 0;
+  const h = setup({ verify: async () => { calls++; if (failure === 'offline') throw Error('offline'); return false; } });
+  await h.enroll(); h.sent.length = 0;
+  h.feed('candidate', 32); h.end('candidate'); await tick();
+  assert.equal(calls, 1);
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.session.authorizeText('candidate', '请等一下'), false);
+});
+
+test('ending during first verification retries remaining speech exactly once', async () => {
+  let resolve;
+  const h = setup({ verify: pcm => pcm.length === 32768 ? new Promise(r => { resolve = r; }) : Promise.resolve(true) });
+  await h.enroll(); h.sent.length = 0;
+  h.feed('candidate', 32); await tick();
+  h.feed('candidate', 5); h.end('candidate'); resolve(false); await tick();
+  assert.equal(h.sent.length, 38);
+  assert.equal(h.sent.at(-1).status, 2);
+});
+
+for (const phase of ['partial', 'verify']) test(`abandoned ${phase} is reclaimed without another audio frame`, async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'] });
+  let resolve;
+  const h = setup({ verify: () => new Promise(r => { resolve = r; }) });
+  await h.enroll(); h.session.finish('owner'); h.sent.length = 0;
+  h.feed('candidate', phase === 'partial' ? 10 : 32); await tick();
+  const record = h.session.records.get('candidate');
+  t.mock.timers.tick(10000);
+  assert.equal(h.session.has('candidate'), false);
+  assert.equal(record.signal.aborted, true);
+  for (const key of ['chunks', 'probe', 'leading', 'silence', 'enrollment']) assert.equal(record[key].length, 0);
+  resolve?.(true); await tick();
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.session.authorizeText('candidate', '请等一下'), false);
+  h.session.reset();
+});
+
+test('incoming frames refresh idle deadline but cannot extend the absolute lifetime', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'] });
+  const h = setup(); h.feed('question', 1);
+  for (let i = 0; i < 13; i++) { t.mock.timers.tick(9000); h.feed('question', 1); }
+  assert.equal(h.session.has('question'), true);
+  t.mock.timers.tick(3000);
+  assert.equal(h.session.has('question'), false);
+  h.session.reset();
+});
+
+test('finishing the owner preserves pending enrollment until reset cancels it', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'] });
+  let signal;
+  const h = setup({ extract: async (pcm, s) => { signal = s; return [1, 0]; } });
+  h.feed('owner', 25); h.session.activateQuestion('owner'); h.session.finish('owner'); await tick();
+  t.mock.timers.tick(120000);
+  assert.equal(signal.aborted, false);
+  h.session.reset(); assert.equal(signal.aborted, true);
+});
+
+
+test('late verification cannot replay audio after a deadline even if timer callbacks were suspended', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'] });
+  let resolve;
+  const h = setup({ verify: () => new Promise(r => { resolve = r; }) });
+  await h.enroll(); h.session.finish('owner'); h.sent.length = 0;
+  h.feed('candidate', 32); await tick();
+  t.mock.timers.setTime(Date.now() + 11000);
+  resolve(true); await tick();
+  assert.equal(h.session.has('candidate'), false);
+  assert.equal(h.sent.length, 0);
+  h.session.reset();
+});
+
+test('record capacity eviction cancels old work and reset clears all retained audio', async () => {
+  const h = setup(); h.feed('old', 1);
+  const old = h.session.records.get('old');
+  for (let i = 0; i < 32; i++) h.feed(`question-${i}`, 1);
+  assert.equal(h.session.records.size, 32);
+  assert.equal(old.signal.aborted, true);
+  assert.equal(old.enrollment.length, 0);
+  const records = [...h.session.records.values()];
+  h.session.reset();
+  assert.equal(h.session.records.size, 0);
+  assert.equal(h.session.cleanupTimer, null);
+  for (const r of records) {
+    assert.equal(r.signal.aborted, true);
+    assert.equal(r.enrollment.length, 0);
+  }
+});
+
+
+test('configured speaker window rounds to complete frames and rejects unsupported audio durations', () => {
+  assert.equal(speakerWindowChunks('1024'), 32);
+  assert.equal(speakerWindowChunks('800'), 25);
+  assert.equal(speakerWindowChunks('900'), 29);
+  assert.equal(speakerWindowChunks('1504'), 47);
+  for (const value of [undefined, '', 'bad', '-1', '199', '1505', 'Infinity']) {
+    assert.equal(speakerWindowChunks(value), 32);
   }
 });

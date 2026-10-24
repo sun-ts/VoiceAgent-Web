@@ -27,7 +27,7 @@ class Settings:
     model_workers: int = field(default_factory=lambda: int(os.getenv('MODEL_WORKERS', '2')))
     max_pending: int = field(default_factory=lambda: int(os.getenv('MAX_PENDING', '16')))
     timeout_seconds: float = field(default_factory=lambda: float(os.getenv('REQUEST_TIMEOUT_SECONDS', '10')))
-    threshold: float = field(default_factory=lambda: float(os.getenv('SIMILARITY_THRESHOLD', '0.60')))
+    threshold: float = field(default_factory=lambda: float(os.environ['SIMILARITY_THRESHOLD']))
     model_dir: str = field(default_factory=lambda: os.getenv('MODEL_DIR', '/models/camplus'))
     device: str = field(default_factory=lambda: os.getenv('DEVICE', 'cuda:0'))
 

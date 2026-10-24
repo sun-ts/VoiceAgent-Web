@@ -92,7 +92,7 @@ for (const mobile of [false, true]) for (const format of ['PCM', 'MP3']) test(`$
     assert.equal(await page.evaluate(() => window.__voice.audioService.value.audioTexts.length), 0,
       'late model callbacks after stop must not enqueue TTS');
     if (format === 'MP3') {
-      await page.evaluate(() => {
+      await page.evaluate(async () => {
         window.Audio = class {
           constructor() { this.listeners = {}; this.readyState = 2; }
           addEventListener(name, callback) { this.listeners[name] = callback; }
@@ -101,6 +101,7 @@ for (const mobile of [false, true]) for (const format of ['PCM', 'MP3']) test(`$
           play() { return new Promise((_, reject) => { this.reject = reject; }); }
         };
         const v = window.__voice;
+        await v.toggleVAD();
         v.audioSounds.value = [{ uuidNum: 1, uuidOrg: 'loading-owner', uuidFlag: 'true', SoundAll: new Blob(['audio']) }];
         v.mp3Player();
         window.__oldAudio = v.audioObj.value;
@@ -343,12 +344,12 @@ for (const mobile of [false, true]) for (const format of ['PCM', 'MP3']) test(`$
   } finally { await context.close(); }
 });
 
-for (const mobile of [false, true]) for (const opening of [false, true]) test(`${mobile ? 'mobile' : 'desktop'} ${opening ? 'opening' : 'reply'} interruption preserves quiet onset through actual ASR packets`, async () => {
+for (const mobile of [false, true]) for (const opening of [false, true]) for (const frames of (opening ? [25, 60] : [32, 60])) test(`${mobile ? 'mobile' : 'desktop'} ${opening ? 'opening' : 'reply'} ${frames * 32}ms interruption preserves quiet onset through actual ASR packets`, async () => {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   try {
     const page = await context.newPage();
     await page.goto(server.resolvedUrls.local[0]);
-    await page.evaluate(async ({ mobile, opening }) => {
+    await page.evaluate(async ({ mobile, opening, frames }) => {
       window.__packets = []; window.__verified = [];
       window.WebSocket = class {
         static OPEN = 1;
@@ -377,21 +378,21 @@ for (const mobile of [false, true]) for (const opening of [false, true]) test(`$
         service.webSockets.slice().forEach(socket => socket.close());
       }
       window.__packets = []; replying = true;
-      // 768ms quiet onset before 1920ms of confidently detected speech.
+      // Quiet onset followed by a short or long spoken phrase.
       for (let i = 0; i < 24; i++) service.voiceTranslate({ isSpeech: .1 }, new Float32Array(512).fill(.01));
-      for (let i = 0; i < 60; i++) service.voiceTranslate({ isSpeech: .95 }, new Float32Array(512).fill(.15));
+      for (let i = 0; i < frames; i++) service.voiceTranslate({ isSpeech: .95 }, new Float32Array(512).fill(.15));
       for (let i = 0; i < 55; i++) service.voiceTranslate({ isSpeech: 0 }, new Float32Array(512));
-    }, { mobile, opening });
+    }, { mobile, opening, frames });
     await page.waitForFunction(() => window.__packets.at(-1)?.data.status === 2);
-    const result = await page.evaluate(() => ({
+    const result = await page.evaluate((frames) => ({
       starts: window.__packets.filter(packet => packet.data.status === 0).length,
       samples: window.__packets.filter(packet => packet.data.audio).map(packet => {
         const bytes = atob(packet.data.audio); return bytes.charCodeAt(0) | bytes.charCodeAt(1) << 8;
-      }).slice(0, 84),
+      }).slice(0, 24 + frames),
       verified: window.__verified,
-    }));
+    }), frames);
     assert.equal(result.starts, 1);
-    assert.deepEqual(result.samples, [...Array(24).fill(327), ...Array(60).fill(4915)], 'quiet onset and voiced frames must arrive once, in order');
+    assert.deepEqual(result.samples, [...Array(24).fill(327), ...Array(frames).fill(4915)], 'quiet onset and voiced frames must arrive once, in order');
     assert.deepEqual(result.verified, opening ? [] : [4915], 'quiet onset must not contaminate the speaker verification window');
     await page.evaluate(() => window.__service.reset());
   } finally { await context.close(); }
@@ -477,5 +478,67 @@ for (const mobile of [false, true]) test(`${mobile ? 'mobile' : 'desktop'} TTS d
         owner: v.play_UUID.value, number: v.play_Num.value };
     });
     assert.deepEqual(result, { next: 2, complete: true, after: null, remaining: 0, sockets: 0, owner: '', number: 0 });
+  } finally { await context.close(); }
+});
+
+for (const mobile of [false, true]) for (const action of ['pagehide', 'stop']) test(`${mobile ? 'mobile' : 'desktop'} ${action} clears capture even when VAD pause fails`, async () => {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true,
+    ...(mobile ? { userAgent: 'Mozilla/5.0 (iPhone) Mobile' } : {}),
+  });
+  try {
+    await context.addInitScript(() => sessionStorage.setItem('voice-client-login', '1'));
+    const page = await context.newPage();
+    await page.route('**/src/utils/Services/VoiceRuntime.js', route => route.fulfill({ contentType: 'text/javascript', body: `
+      export async function createVoiceDetector(options) {
+        window.__lateFrame = () => options.onFrameProcessed({isSpeech:.95}, new Float32Array(512).fill(.1));
+        return { start:async()=>{}, pause:async()=>{throw Error('device gone')}, destroy:async()=>{} };
+      }` }));
+    await page.goto(server.resolvedUrls.local[0]);
+    await page.getByText('语音引擎已就绪', { exact: true }).first().waitFor();
+    const result = await page.evaluate(async action => {
+      const v = window.__voice;
+      await v.toggleVAD();
+      const service = v.voiceService.value;
+      service.sendAudioData = () => {};
+      service.speaker.push('pending', new Uint8Array(1024), 0, true);
+      const record = service.speaker.records.get('pending');
+      let closed = 0;
+      service.webSockets.push({ close(){closed++} });
+      service.linkedList.push(new Uint8Array(1024));
+      if (action === 'pagehide') window.dispatchEvent(new Event('pagehide'));
+      else await v.toggleVAD();
+      for (let i = 0; i < 30; i++) window.__lateFrame();
+      return { records: service.speaker.records.size, aborted: record.signal.aborted,
+        sockets: service.webSockets.length, buffered: service.linkedList.length, listening: v.listening.value, closed };
+    }, action);
+    assert.deepEqual(result, { records: 0, aborted: true, sockets: 0, buffered: 0, listening: false, closed: 1 });
+  } finally { await context.close(); }
+});
+
+test('idle expiry closes ASR and resets capture so new speech starts a fresh utterance', async () => {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  try {
+    const page = await context.newPage();
+    await page.goto(server.resolvedUrls.local[0]);
+    const result = await page.evaluate(async () => {
+      const { default: VoiceService } = await import('/src/utils/Services/VoiceService.js');
+      const service = new VoiceService(.55, .35, 7, 38, 250,
+        {appContext:{config:{globalProperties:{$uuid:()=> 'new'}}}}, () => {}, null, null);
+      service.sendAudioData = () => {};
+      service.speaker.push('old', new Uint8Array(1024), 0, true);
+      let closed = 0;
+      service.webSockets.push({isMine: id => id === 'old', close: () => {closed++}});
+      service.uuidAsr = 'old'; service.isSend = service.isTrigger = true;
+      service.linkedList.push(new Uint8Array(1024));
+      service.speaker.records.get('old').lastFrameAt -= 11000;
+      service.speaker.expireRecords();
+      const clean = { closed, sockets: service.webSockets.length, buffered: service.linkedList.length,
+        id: service.uuidAsr, sending: service.isSend, records: service.speaker.records.size };
+      for (let i = 0; i < 25; i++) service.voiceTranslate({isSpeech:.95}, new Float32Array(512).fill(.1));
+      const recovered = service.speaker.has('new');
+      service.reset();
+      return {clean, recovered};
+    });
+    assert.deepEqual(result, {clean: {closed: 1, sockets: 0, buffered: 0, id: '', sending: false, records: 0}, recovered: true});
   } finally { await context.close(); }
 });

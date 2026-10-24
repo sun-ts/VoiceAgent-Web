@@ -15,13 +15,14 @@ services:
       - "${BIND_ADDRESS:-0.0.0.0}:${PORT:-8008}:8000"
     volumes:
       - /home/blingcode/models/funasr/camplus:/models/camplus
+    env_file:
+      - .env
     environment:
       MODEL_DIR: /models/camplus
       MODEL_REVISION: ${MODEL_REVISION:-v2.0.2}
       DEVICE: cuda:0
       MODEL_WORKERS: ${MODEL_WORKERS:-2}
       MAX_PENDING: ${MAX_PENDING:-16}
-      SIMILARITY_THRESHOLD: ${SIMILARITY_THRESHOLD:-0.60}
       REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-10}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

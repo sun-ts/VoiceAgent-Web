@@ -303,24 +303,35 @@ const toggleHeader = () => {
   headerCollapsed.value = !headerCollapsed.value
 }
 
+let captureSuspended = false;
+const stopCapture = async () => {
+  // Retire buffers and requests synchronously, even if the device cannot pause.
+  captureSuspended = true;
+  voiceService.value?.reset();
+  closeVoicePlayThread();
+  listening.value = false;
+  statusText.value = '已停止';
+  indicatorColor.value = '#cccccc';
+  modelThinkingUUIDList.value = [];
+  try { await vad.value?.pause(); }
+  catch (error) { voiceLog('vad.pause_failed', { errorType: error?.name }, 'warn'); }
+};
+const handlePageHide = () => { void stopCapture(); };
+
 // 切换检测状态
 const toggleVAD = async () => {
   if (loading.value || starting.value || !vad.value || initError.value) return;
   if (listening.value) {
-    await vad.value.pause()
-    voiceService.value?.reset();
-    closeVoicePlayThread();
-    listening.value = false
-    statusText.value = '已停止'
-    indicatorColor.value = '#cccccc'
-    modelThinkingUUIDList.value = [];
+    await stopCapture();
   } else {
     starting.value = true;
     try {
       voiceService.value.speaker.configureInterruption(interruptionSettings.value);
       voiceService.value.configureVolumeFilter(volumeFilterSettings.value);
+      captureSuspended = false;
       await vad.value.start();
     } catch (err) {
+      await stopCapture();
       initError.value = true;
       statusText.value = '语音启动失败，请检查麦克风权限后重新加载';
       voiceLog('vad.start_failed', { errorType: err?.name }, 'error');
@@ -328,7 +339,7 @@ const toggleVAD = async () => {
     } finally {
       starting.value = false;
     }
-    if (initialization.signal.aborted) return;
+    if (initialization.signal.aborted || captureSuspended) { await stopCapture(); return; }
     VoicePlayThread();
     listening.value = true;
     statusText.value = '正在检测...';
@@ -400,7 +411,7 @@ const initVAD = async () => {
       processorType : 'auto',
       // 帧处理回调 - 实时更新状态
       onFrameProcessed: (probs, frame) => {
-        if (initialization.signal.aborted) return;
+        if (initialization.signal.aborted || captureSuspended) return;
         if(loading.value) return;
         //16000每帧32ms音频
         voiceService.value.voiceTranslate(probs, frame);
@@ -996,6 +1007,7 @@ const inputVolume = async (volume) => {
 
 // 组件挂载时初始化
 onMounted(() => {
+  window.addEventListener('pagehide', handlePageHide);
   initVAD();
   // 扩展 dayjs 支持时区和UTC
   dayjs.extend(utc);
@@ -1020,6 +1032,8 @@ watch(
 
 // 组件卸载时清理
 onUnmounted(async () => {
+  window.removeEventListener('pagehide', handlePageHide);
+  captureSuspended = true;
   initialization.abort();
   voiceService.value?.reset();
   closeVoicePlayThread();
